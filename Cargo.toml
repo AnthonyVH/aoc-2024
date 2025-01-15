@@ -6,6 +6,12 @@ edition = "2021"
 
 [dependencies]
 criterion = "0.5"
+itertools = "0.13"
+nalgebra = "0.33"
+regex = "1"
+strum = "0.26"
+strum_macros = "0.26"
+util = { path = "util" }
 
 [workspace]
 resolver = "2"
@@ -19,3 +25,8 @@ debug = true
 [[bench]]
 name = "day_01"
 harness = false
+
+[[bench]]
+name = "day_02"
+harness = false
+
