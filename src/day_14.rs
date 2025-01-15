@@ -44,7 +44,9 @@ fn coord_to_quadrant(pos: util::Coord, room_size: util::Coord) -> Option<usize> 
     }
 }
 
-pub fn part_a(input: &str, room_size: util::Coord) -> usize {
+pub static ROOM_SIZE: util::Coord = util::Coord { row: 103, col: 101 };
+
+pub fn part_a_configurable(input: &str, room_size: util::Coord) -> usize {
     let robots: Vec<Robot> = input.lines().map(|e| e.parse().unwrap()).collect();
 
     const NUM_STEPS: isize = 100;
@@ -70,6 +72,10 @@ pub fn part_a(input: &str, room_size: util::Coord) -> usize {
         .unwrap()
 }
 
+pub fn part_a(input: &str) -> usize {
+    part_a_configurable(input, ROOM_SIZE)
+}
+
 pub fn part_b(_input: &str) -> usize {
     0
 }
@@ -79,10 +85,13 @@ mod tests {
     #[test]
     fn example_a() {
         util::run_test(|| {
-            let room_size = util::Coord { row: 7, col: 11 };
+            let example_room_size = util::Coord { row: 7, col: 11 };
             let expected: usize = 12;
             assert_eq!(
-                crate::day_14::part_a(&util::read_resource("example_14.txt").unwrap(), room_size),
+                crate::day_14::part_a_configurable(
+                    &util::read_resource("example_14.txt").unwrap(),
+                    example_room_size
+                ),
                 expected
             );
         });

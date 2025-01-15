@@ -126,10 +126,10 @@ impl Equation {
         found_solution
     }
 
-    fn solvable(&self, operators: &[Operator], iterative: bool) -> bool {
-        match iterative {
-            false => self._solvable_iterative(operators),
-            true => self._solvable_recursive(operators),
+    fn solvable(&self, operators: &[Operator], looping: Looping) -> bool {
+        match looping {
+            Looping::Recursive => self._solvable_iterative(operators),
+            Looping::Iterative => self._solvable_recursive(operators),
         }
     }
 
@@ -149,30 +149,46 @@ impl Equation {
     }
 }
 
-pub fn part_a(input: &str, iterative: bool) -> u64 {
+#[derive(Copy, Clone)]
+pub enum Looping {
+    Iterative,
+    Recursive,
+}
+
+pub fn part_a_configurable(input: &str, looping: Looping) -> u64 {
     let problem: Vec<Equation> = input.lines().map(|e| e.parse().unwrap()).collect();
     let operators = [Operator::Add, Operator::Mult];
 
     problem
         .par_iter()
-        .filter(|eq| eq.solvable(&operators, iterative))
+        .filter(|eq| eq.solvable(&operators, looping))
         .map(|e| e.target)
         .sum()
 }
 
-pub fn part_b(input: &str, iterative: bool) -> u64 {
+pub fn part_b_configurable(input: &str, looping: Looping) -> u64 {
     let problem: Vec<Equation> = input.lines().map(|e| e.parse().unwrap()).collect();
     let operators = [Operator::Add, Operator::Mult, Operator::Concat];
 
     problem
         .par_iter()
-        .filter(|eq| eq.solvable(&operators, iterative))
+        .filter(|eq| eq.solvable(&operators, looping))
         .map(|e| e.target)
         .sum()
 }
 
+pub fn part_a(input: &str) -> u64 {
+    part_a_configurable(input, Looping::Iterative)
+}
+
+pub fn part_b(input: &str) -> u64 {
+    part_b_configurable(input, Looping::Iterative)
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::day_07::Looping;
+
     const EXPECTED_A: u64 = 3749;
     const EXPECTED_B: u64 = 11387;
 
@@ -180,7 +196,10 @@ mod tests {
     fn example_a_recursive() {
         util::run_test(|| {
             assert_eq!(
-                crate::day_07::part_a(&util::read_resource("example_07.txt").unwrap(), false),
+                crate::day_07::part_a_configurable(
+                    &util::read_resource("example_07.txt").unwrap(),
+                    Looping::Recursive
+                ),
                 EXPECTED_A
             );
         });
@@ -190,7 +209,10 @@ mod tests {
     fn example_a_iterative() {
         util::run_test(|| {
             assert_eq!(
-                crate::day_07::part_a(&util::read_resource("example_07.txt").unwrap(), true),
+                crate::day_07::part_a_configurable(
+                    &util::read_resource("example_07.txt").unwrap(),
+                    Looping::Iterative
+                ),
                 EXPECTED_A
             );
         });
@@ -200,7 +222,10 @@ mod tests {
     fn example_b_recursive() {
         util::run_test(|| {
             assert_eq!(
-                crate::day_07::part_b(&util::read_resource("example_07.txt").unwrap(), false),
+                crate::day_07::part_b_configurable(
+                    &util::read_resource("example_07.txt").unwrap(),
+                    Looping::Recursive
+                ),
                 EXPECTED_B
             );
         });
@@ -210,7 +235,10 @@ mod tests {
     fn example_b_iterative() {
         util::run_test(|| {
             assert_eq!(
-                crate::day_07::part_b(&util::read_resource("example_07.txt").unwrap(), true),
+                crate::day_07::part_b_configurable(
+                    &util::read_resource("example_07.txt").unwrap(),
+                    Looping::Iterative
+                ),
                 EXPECTED_B
             );
         });
