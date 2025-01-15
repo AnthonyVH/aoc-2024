@@ -12,7 +12,7 @@ log = "0.4"
 nalgebra = "0.33"
 rayon = "1"
 regex = "1"
-smallvec = "1"
+rustc-hash = "2.1"
 strum = "0.26"
 strum_macros = "0.26"
 util = { path = "util" }
@@ -70,4 +70,8 @@ harness = false
 
 [[bench]]
 name = "day_10"
+harness = false
+
+[[bench]]
+name = "day_11"
 harness = false
