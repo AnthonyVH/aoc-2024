@@ -1,8 +1,10 @@
+mod bit;
 mod coord;
 mod file;
 mod get;
 mod slice;
 
+pub use bit::*;
 pub use coord::*;
 pub use file::*;
 pub use get::*;

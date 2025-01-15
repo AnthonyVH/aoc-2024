@@ -2,14 +2,14 @@ use criterion;
 
 fn bench_part_a(bench: &mut criterion::Criterion) {
     let input: String = util::read_resource("day_01.txt").unwrap();
-    bench.bench_function("Day 1 - Part A", |b| {
+    bench.bench_function("Day 01 - Part A", |b| {
         b.iter(|| aoc_2024::day_01::part_a(&input))
     });
 }
 
 fn bench_part_b(bench: &mut criterion::Criterion) {
     let input: String = util::read_resource("day_01.txt").unwrap();
-    bench.bench_function("Day 1 - Part B", |b| {
+    bench.bench_function("Day 01 - Part B", |b| {
         b.iter(|| aoc_2024::day_01::part_b(&input))
     });
 }
