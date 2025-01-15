@@ -1,3 +1,7 @@
+use nalgebra as na;
+use rayon::prelude::*;
+use rustc_hash::FxHashMap as HashMap;
+
 #[derive(Debug)]
 struct Robot {
     position: util::Coord,
@@ -24,6 +28,16 @@ impl std::str::FromStr for Robot {
             position: coords.next().unwrap(),
             velocity: coords.next().unwrap(),
         })
+    }
+}
+
+impl Robot {
+    fn step(&self, room_size: &util::Coord, num_steps: isize) -> util::Coord {
+        let mut result = self.position + num_steps * self.velocity;
+        // The % operation is remainer, we need modulo (i.e. always positive).
+        result.row = result.row.rem_euclid(room_size.row);
+        result.col = result.col.rem_euclid(room_size.col);
+        result
     }
 }
 
@@ -54,13 +68,7 @@ pub fn part_a_configurable(input: &str, room_size: util::Coord) -> usize {
 
     robots
         .iter()
-        .map(|e| {
-            let mut end_pos = e.position + NUM_STEPS * e.velocity;
-            // The % operation is remainer, we need modulo (i.e. always positive).
-            end_pos.row = end_pos.row.rem_euclid(room_size.row);
-            end_pos.col = end_pos.col.rem_euclid(room_size.col);
-            end_pos
-        })
+        .map(|e| e.step(&room_size, NUM_STEPS))
         .filter_map(|e| coord_to_quadrant(e, room_size))
         .for_each(|e| quadrant_count[e] += 1);
     log::debug!("Quadrant count: {:?}", quadrant_count);
@@ -76,8 +84,84 @@ pub fn part_a(input: &str) -> usize {
     part_a_configurable(input, ROOM_SIZE)
 }
 
-pub fn part_b(_input: &str) -> usize {
-    0
+fn are_robots_clustered(robots: &[Robot], num_steps: usize, required_set_size: usize) -> bool {
+    // Create a disjoint set to keep track of adjacent positions.
+    // NOTE: We don't need/want to store any extra data in this set, so make
+    // the type as short as possible.
+    let mut set: partitions::PartitionVec<_> = partitions::partition_vec![(); robots.len()];
+    let mut is_occupied: HashMap<util::Coord, usize> =
+        HashMap::with_capacity_and_hasher(robots.len(), rustc_hash::FxBuildHasher);
+
+    // NOTE: It would be great to do an early exit if we know there will be
+    // more sets than required, i.e. the iteration won't be succesfull.
+    // Unfortunately querying the number of sets is O(n), so this would just
+    // massively slow things down.
+    static SEARCH_DIRS: [util::Coord; 4] = [
+        util::Direction::North.to_coord(),
+        util::Direction::East.to_coord(),
+        util::Direction::South.to_coord(),
+        util::Direction::West.to_coord(),
+    ];
+
+    for (idx, robot) in robots.iter().enumerate() {
+        let pos = robot.step(&ROOM_SIZE, num_steps as isize);
+        is_occupied.insert(pos, idx);
+
+        // Find occupied neighbors.
+        // NOTE: This counts every robot, i.e. if multiple robots are on the
+        // same position, they will all be counted individually.
+        for offset in SEARCH_DIRS.iter() {
+            let neighbor_pos = pos + offset;
+            if let Some(neighbor_idx) = is_occupied.get(&neighbor_pos) {
+                set.union(idx, *neighbor_idx);
+            }
+        }
+    }
+
+    // Find the largest set.
+    let max_set_size = set.all_sets().map(|e| e.count()).max().unwrap();
+    let is_clustered = max_set_size > required_set_size;
+    if is_clustered {
+        let mut positions =
+            na::DMatrix::from_element(ROOM_SIZE.row as usize, ROOM_SIZE.col as usize, '.');
+        for pos in is_occupied.keys() {
+            positions[pos] = '#';
+        }
+        log::debug!("{}", positions);
+    }
+
+    is_clustered
+}
+
+pub fn part_b(input: &str) -> usize {
+    // NOTE: This question is bullshit.
+    let robots: Vec<Robot> = input.lines().map(|e| e.parse().unwrap()).collect();
+
+    // Iterate steps until we find one for which the given percentage of robots
+    // are in adjacent positions.
+    // NOTE: This threshold is pretty random... Putting it at 50% doesn't work,
+    // even though the problem statement says "most of the robots" should be
+    // arranged in a picture of a Christmas tree...
+    const REQUIRED_CLUSTER_PERCENTAGE: usize = 30;
+    const NUM_PARALLEL_STEPS: usize = 128;
+
+    let required_set_size = REQUIRED_CLUSTER_PERCENTAGE * robots.len() / 100;
+    let mut num_steps: usize = 0;
+
+    // NOTE: Iterating in chunks is faster than iterating over an endless range.
+    // By almost a factor 6...
+    loop {
+        let first_match = (0..NUM_PARALLEL_STEPS)
+            .par_bridge() // NOTE: This is somehow faster than into_par_iter().
+            .find_first(|offset| {
+                are_robots_clustered(&robots, num_steps + *offset, required_set_size)
+            });
+
+        match first_match {
+            Some(offset) => return num_steps + offset,
+            None => num_steps += NUM_PARALLEL_STEPS,
+        }
+    }
 }
 
 #[cfg(test)]
