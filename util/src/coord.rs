@@ -12,7 +12,7 @@ pub enum Direction {
     SouthWest,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Coord {
     pub row: isize,
     pub col: isize,
@@ -27,6 +27,10 @@ impl Coord {
         (self.row < 0) || (self.col < 0)
     }
 
+    pub fn bounded_by(&self, bound: &Coord) -> bool {
+        (self.row < bound.row) && (self.col < bound.col)
+    }
+
     pub fn from_row_major_index(idx: usize, nrows: usize, ncols: usize) -> Coord {
         Coord::from((idx / ncols, idx % nrows))
     }
@@ -37,6 +41,17 @@ impl Coord {
 }
 
 impl std::ops::Add for Coord {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            row: self.row + other.row,
+            col: self.col + other.col,
+        }
+    }
+}
+
+impl std::ops::Add for &Coord {
     type Output = Coord;
 
     fn add(self, other: Self) -> Coord {
@@ -55,9 +70,20 @@ impl std::ops::AddAssign for Coord {
 }
 
 impl std::ops::Sub for Coord {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self {
+        Self {
+            row: self.row - other.row,
+            col: self.col - other.col,
+        }
+    }
+}
+
+impl std::ops::Sub for &Coord {
     type Output = Coord;
 
-    fn sub(self, other: Coord) -> Coord {
+    fn sub(self, other: Self) -> Coord {
         Coord {
             row: self.row - other.row,
             col: self.col - other.col,
