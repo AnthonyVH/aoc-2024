@@ -20,7 +20,7 @@ pub struct Coord {
 
 impl Coord {
     pub fn as_pair(&self) -> (usize, usize) {
-        (*self).into()
+        self.into()
     }
 
     pub fn has_negatives(&self) -> bool {
@@ -159,21 +159,69 @@ impl From<(usize, usize)> for Coord {
 
 impl From<Coord> for (usize, usize) {
     fn from(coord: Coord) -> (usize, usize) {
-        assert!(coord.row >= 0);
-        assert!(coord.col >= 0);
+        (&coord).into()
+    }
+}
+
+impl From<&Coord> for (usize, usize) {
+    fn from(coord: &Coord) -> (usize, usize) {
+        // This assert causes a signification slowdown and is only used to catch
+        // e.g. one-off errors during debugging anyway.
+        #[cfg(test)]
+        assert!(!coord.has_negatives());
         (coord.row as usize, coord.col as usize)
     }
 }
 
 // Need to implement traits for Get here, since it's not allowed to implement non-crate
 // traits for non-crate types.
-impl<T> std::ops::Index<crate::Coord> for na::DMatrix<T> {
+impl<T> std::ops::Index<Coord> for na::DMatrix<T> {
     type Output = T;
 
-    fn index(&self, index: crate::Coord) -> &Self::Output {
-        assert!(index.row >= 0);
-        assert!(index.col >= 0);
-        &self[(index.row as usize, index.col as usize)]
+    fn index(&self, index: Coord) -> &Self::Output {
+        &self[Into::<(usize, usize)>::into(index)]
+    }
+}
+
+impl<T> std::ops::IndexMut<Coord> for na::DMatrix<T> {
+    fn index_mut(&mut self, index: Coord) -> &mut Self::Output {
+        &mut self[Into::<(usize, usize)>::into(index)]
+    }
+}
+
+impl<'a, T: 'a, R, C, S> na::base::indexing::MatrixIndex<'a, T, R, C, S> for Coord
+where
+    R: na::Dim,
+    C: na::Dim,
+    S: na::RawStorage<T, R, C>,
+{
+    type Output = &'a T;
+
+    fn contained_by(&self, matrix: &na::Matrix<T, R, C, S>) -> bool {
+        let pair = Into::<(usize, usize)>::into(self);
+        pair.contained_by(matrix)
+    }
+
+    unsafe fn get_unchecked(self, matrix: &'a na::Matrix<T, R, C, S>) -> Self::Output {
+        let pair = Into::<(usize, usize)>::into(self);
+        pair.get_unchecked(matrix)
+    }
+}
+
+impl<'a, T: 'a, R, C, S> na::base::indexing::MatrixIndexMut<'a, T, R, C, S> for Coord
+where
+    R: na::Dim,
+    C: na::Dim,
+    S: na::RawStorageMut<T, R, C>,
+{
+    type OutputMut = &'a mut T;
+
+    unsafe fn get_unchecked_mut(
+        self,
+        matrix: &'a mut nalgebra::Matrix<T, R, C, S>,
+    ) -> Self::OutputMut {
+        let pair = Into::<(usize, usize)>::into(self);
+        pair.get_unchecked_mut(matrix)
     }
 }
 
