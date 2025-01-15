@@ -1,5 +1,4 @@
 #![feature(portable_simd)]
-#![feature(slice_partition_dedup)]
 
 pub mod day_01;
 pub mod day_02;
@@ -22,3 +21,4 @@ pub mod day_18;
 pub mod day_19;
 pub mod day_20;
 pub mod day_22;
+pub mod day_23;

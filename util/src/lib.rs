@@ -2,6 +2,7 @@ mod bit;
 mod coord;
 mod file;
 mod get;
+mod graph;
 mod maze;
 mod slice;
 
@@ -9,6 +10,7 @@ pub use bit::*;
 pub use coord::*;
 pub use file::*;
 pub use get::*;
+pub use graph::*;
 pub use maze::*;
 pub use slice::*;
 
