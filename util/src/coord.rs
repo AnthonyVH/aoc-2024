@@ -1,6 +1,6 @@
 extern crate nalgebra as na;
 
-#[derive(Clone, Copy, Debug, strum_macros::EnumIter)]
+#[derive(Clone, Copy, Debug, PartialEq, strum_macros::EnumIter)]
 pub enum Direction {
     East,
     West,
@@ -12,20 +12,63 @@ pub enum Direction {
     SouthWest,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Coord {
     pub row: isize,
     pub col: isize,
 }
 
-impl std::ops::Add for Coord {
-    type Output = Self;
+impl Coord {
+    pub fn as_pair(&self) -> (usize, usize) {
+        (*self).into()
+    }
 
-    fn add(self, other: Self) -> Self {
-        Self {
+    pub fn has_negatives(&self) -> bool {
+        (self.row < 0) || (self.col < 0)
+    }
+
+    pub fn from_row_major_index(idx: usize, nrows: usize, ncols: usize) -> Coord {
+        Coord::from((idx / ncols, idx % nrows))
+    }
+
+    pub fn from_column_major_index(idx: usize, nrows: usize, ncols: usize) -> Coord {
+        Coord::from((idx % nrows, idx / ncols))
+    }
+}
+
+impl std::ops::Add for Coord {
+    type Output = Coord;
+
+    fn add(self, other: Self) -> Coord {
+        Coord {
             row: self.row + other.row,
             col: self.col + other.col,
         }
+    }
+}
+
+impl std::ops::AddAssign for Coord {
+    fn add_assign(&mut self, rhs: Coord) {
+        self.row += rhs.row;
+        self.col += rhs.col;
+    }
+}
+
+impl std::ops::Sub for Coord {
+    type Output = Coord;
+
+    fn sub(self, other: Coord) -> Coord {
+        Coord {
+            row: self.row - other.row,
+            col: self.col - other.col,
+        }
+    }
+}
+
+impl std::ops::SubAssign for Coord {
+    fn sub_assign(&mut self, rhs: Coord) {
+        self.row -= rhs.row;
+        self.col -= rhs.col;
     }
 }
 
@@ -41,10 +84,26 @@ impl std::ops::Mul<Coord> for isize {
 }
 
 impl std::ops::Mul<isize> for Coord {
-    type Output = Self;
+    type Output = Coord;
 
     fn mul(self, other: isize) -> Coord {
         other * self
+    }
+}
+
+impl std::ops::Mul<u8> for Coord {
+    type Output = Coord;
+
+    fn mul(self, other: u8) -> Coord {
+        other as isize * self
+    }
+}
+
+impl std::ops::Mul<Coord> for u8 {
+    type Output = Coord;
+
+    fn mul(self, other: Coord) -> Coord {
+        self as isize * other
     }
 }
 
@@ -69,6 +128,14 @@ impl From<(usize, usize)> for Coord {
             row: row.try_into().unwrap(),
             col: col.try_into().unwrap(),
         }
+    }
+}
+
+impl From<Coord> for (usize, usize) {
+    fn from(coord: Coord) -> (usize, usize) {
+        assert!(coord.row >= 0);
+        assert!(coord.col >= 0);
+        (coord.row as usize, coord.col as usize)
     }
 }
 

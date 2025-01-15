@@ -6,7 +6,9 @@ edition = "2021"
 
 [dependencies]
 criterion = "0.5"
+env_logger = "0.11"
 itertools = "0.13"
+log = "0.4"
 nalgebra = "0.33"
 regex = "1"
 strum = "0.26"
@@ -16,6 +18,12 @@ util = { path = "util" }
 [workspace]
 resolver = "2"
 members = ["util"]
+
+[profile.bench]
+# Maximum runtime performance.
+codegen-units = 1
+lto = "fat"
+#panic = "abort" # Create warnings.
 
 [profile.flamegraph]
 # Release with debug info.
@@ -42,3 +50,6 @@ harness = false
 name = "day_05"
 harness = false
 
+[[bench]]
+name = "day_06"
+harness = false
