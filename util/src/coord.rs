@@ -1,6 +1,6 @@
 use nalgebra as na;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, strum_macros::EnumIter)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, strum_macros::EnumIter, Hash)]
 pub enum Direction {
     North,
     East,

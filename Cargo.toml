@@ -13,8 +13,8 @@ heck = "0.5"
 itertools = "0.13"
 log = "0.4"
 nalgebra = "0.33"
-partitions = "0.2"
 paste = "1.0"
+permutohedron = "0.2"
 radix-heap = "0.4"
 rayon = "1"
 rayon-cond = "0.3"
@@ -30,11 +30,14 @@ yada = "0.5"
 resolver = "2"
 members = ["util"]
 
+[profile.release]
+panic = "abort"
+
 [profile.bench]
 # Maximum runtime performance.
 codegen-units = 1
 lto = "fat"
-#panic = "abort" # Create warnings.
+panic = "abort" # Gets ignored by Cargo...
 
 [profile.flamegraph]
 # Release with debug info.
@@ -119,6 +122,10 @@ harness = false
 
 [[bench]]
 name = "day_20"
+harness = false
+
+[[bench]]
+name = "day_21"
 harness = false
 
 [[bench]]
