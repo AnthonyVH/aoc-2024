@@ -1,7 +1,21 @@
 [package]
 name = "aoc-2024"
+authors = ["Anthony Van Herrewege"]
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-criterion = { version = "0.5" }
+criterion = "0.5"
+
+[workspace]
+resolver = "2"
+members = ["util"]
+
+[profile.bench]
+# Release with debug info.
+inherits = "release"
+debug = true
+
+[[bench]]
+name = "day_01"
+harness = false
