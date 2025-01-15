@@ -76,16 +76,18 @@ fn main() {
         create_runner!(day_13, part_a),
         create_runner!(day_13, part_b),
         create_runner!(day_14, part_a),
-        //create_runner!(day_14, part_b),
+        create_runner!(day_14, part_b),
         create_runner!(day_15, part_a),
         create_runner!(day_15, part_b),
         create_runner!(day_16, part_a),
         create_runner!(day_16, part_b),
     ];
 
+    let mut total: std::time::Duration = std::time::Duration::new(0, 0);
     for runner in runners {
         let result = (runner.invoker)();
         let us = result.duration.as_micros();
+        total += result.duration;
         println!(
             "{}: {:<15}{:10} µs{:>2}",
             runner.name,
@@ -94,4 +96,11 @@ fn main() {
             if us > 1000 { "!" } else { "" }
         );
     }
+    println!("{:=^47}", "");
+    println!(
+        "{:32}{:10} µs{:>2}",
+        "Total:",
+        total.as_micros(),
+        if total.as_secs_f64() > 1. { "!" } else { "" },
+    );
 }
