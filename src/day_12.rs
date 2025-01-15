@@ -52,7 +52,7 @@ impl MatrixDfsSearcher {
 
             // Try to visit all neighbors.
             for &offset_dir in Self::SEARCH_DIRS.iter() {
-                let neighbor_pos: util::Coord = visit_pos + offset_dir.into();
+                let neighbor_pos: util::Coord = visit_pos + offset_dir;
 
                 if neighbor_pos.has_negatives() {
                     (no_neighbor_fn)(visit_pos, offset_dir);

@@ -1,6 +1,6 @@
 extern crate nalgebra as na;
 
-#[derive(Clone, Copy, Debug, PartialEq, strum_macros::EnumIter)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, strum_macros::EnumIter)]
 pub enum Direction {
     East,
     West,
@@ -58,6 +58,30 @@ impl std::ops::Add for &Coord {
         Coord {
             row: self.row + other.row,
             col: self.col + other.col,
+        }
+    }
+}
+
+impl std::ops::Add<Direction> for Coord {
+    type Output = Self;
+
+    fn add(self, other: Direction) -> Self {
+        let offset: Coord = other.into();
+        Self {
+            row: self.row + offset.row,
+            col: self.col + offset.col,
+        }
+    }
+}
+
+impl std::ops::Add<Direction> for &Coord {
+    type Output = Coord;
+
+    fn add(self, other: Direction) -> Coord {
+        let offset: Coord = other.into();
+        Coord {
+            row: self.row + offset.row,
+            col: self.col + offset.col,
         }
     }
 }

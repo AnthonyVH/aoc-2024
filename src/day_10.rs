@@ -52,7 +52,7 @@ impl TopographicMap {
                 // Otherwise keep searching by visiting all children that have a
                 // height one larger than current position.
                 for &offset_dir in Self::SEARCH_DIRS.iter() {
-                    let coord: util::Coord = pos + offset_dir.into();
+                    let coord: util::Coord = pos + offset_dir;
 
                     if coord.has_negatives() {
                         continue; // Don't bother with invalid coordinates.

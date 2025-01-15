@@ -249,13 +249,13 @@ pub fn part_b(input: &str) -> usize {
                             '[' => {
                                 new_boxes.push(next_coord);
                                 if !is_horizontal_move {
-                                    new_boxes.push(next_coord + util::Direction::East.into());
+                                    new_boxes.push(next_coord + util::Direction::East);
                                 }
                             }
                             ']' => {
                                 new_boxes.push(next_coord);
                                 if !is_horizontal_move {
-                                    new_boxes.push(next_coord + util::Direction::West.into());
+                                    new_boxes.push(next_coord + util::Direction::West);
                                 }
                             }
                             '@' => unreachable!(),
