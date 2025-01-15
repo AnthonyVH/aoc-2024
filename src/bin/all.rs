@@ -79,6 +79,8 @@ fn main() {
         //create_runner!(day_14, part_b),
         create_runner!(day_15, part_a),
         create_runner!(day_15, part_b),
+        create_runner!(day_16, part_a),
+        create_runner!(day_16, part_b),
     ];
 
     for runner in runners {

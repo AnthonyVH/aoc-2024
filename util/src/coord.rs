@@ -2,10 +2,10 @@ extern crate nalgebra as na;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, strum_macros::EnumIter)]
 pub enum Direction {
-    East,
-    West,
     North,
+    East,
     South,
+    West,
     NorthEast,
     NorthWest,
     SouthEast,
