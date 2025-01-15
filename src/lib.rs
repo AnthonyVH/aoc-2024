@@ -1,3 +1,4 @@
+#![feature(iter_array_chunks)]
 #![feature(portable_simd)]
 
 pub mod day_01;
@@ -23,3 +24,4 @@ pub mod day_20;
 pub mod day_22;
 pub mod day_23;
 pub mod day_24;
+pub mod day_25;

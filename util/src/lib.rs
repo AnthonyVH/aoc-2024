@@ -14,6 +14,8 @@ pub use graph::*;
 pub use maze::*;
 pub use slice::*;
 
+pub extern crate heck;
+
 pub fn init(is_test: bool) {
     let _ = env_logger::Builder::from_default_env()
         .is_test(is_test)
@@ -45,7 +47,7 @@ where
 
 #[macro_export]
 macro_rules! run_day {
-    ($day: ident) => {{
+    ($day: ident, $($func: ident), +) => {{
         use aoc_2024::$day;
 
         util::init!();
@@ -57,7 +59,15 @@ macro_rules! run_day {
         let input_file = format!("{}.txt", stringify!($day));
         let input: String = util::read_resource(&input_file).unwrap();
 
-        println!("[Day {} - Part A] {}", day_repr, aoc_2024::$day::part_a(&input));
-        println!("[Day {} - Part B] {}", day_repr, aoc_2024::$day::part_b(&input));
+        $(
+            let mut func_repr = stringify!($func);
+            println!("[Day {} - {}] {}",
+                day_repr,
+                $crate::heck::AsTitleCase(func_repr),
+                aoc_2024::$day::$func(&input));
+        )*
     }};
+    ($day: ident) => {
+        $crate::run_day!($day, part_a, part_b)
+    };
 }

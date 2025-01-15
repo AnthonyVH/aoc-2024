@@ -38,9 +38,9 @@ macro_rules! create_runner {
 
         Runner {
             name: format!(
-                "Day {} - Part {}",
+                "Day {} - {}",
                 day_str[day_str.len() - 2..].to_string(),
-                stringify!($part).to_uppercase().pop().unwrap()
+                heck::AsTitleCase(stringify!($part))
             ),
             invoker: Box::new(move || {
                 invoke_timed(|| format!("{}", aoc_2024::$day::$part(&input)))
@@ -97,6 +97,7 @@ fn main() {
         create_runner!(day_23, part_b),
         create_runner!(day_24, part_a),
         create_runner!(day_24, part_b),
+        create_runner!(day_25, part_a),
     ];
 
     let mut total: std::time::Duration = std::time::Duration::new(0, 0);
@@ -105,16 +106,16 @@ fn main() {
         let us = result.duration.as_micros();
         total += result.duration;
         println!(
-            "{:15}: {:<18}{:7} µs{:>2}",
+            "{:15}: {:<38}{:7} µs{:>2}",
             runner.name,
             result.solution,
             us,
             if us > 1000 { "!" } else { "" }
         );
     }
-    println!("{:=^47}", "");
+    println!("{:=^67}", "");
     println!(
-        "{:32}{:10} µs{:>2}",
+        "{:52}{:10} µs{:>2}",
         "Total:",
         total.as_micros(),
         if total.as_secs_f64() > 1. { "!" } else { "" },
