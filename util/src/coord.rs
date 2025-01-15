@@ -28,7 +28,9 @@ impl Coord {
     }
 
     pub fn bounded_by(&self, bound: &Coord) -> bool {
-        (self.row < bound.row) && (self.col < bound.col)
+        // Can't use < on the coords, because it will return true if the row is
+        // less, but the column isn't.
+        !self.has_negatives() && ((self.row < bound.row) && (self.col < bound.col))
     }
 
     pub fn from_row_major_index(idx: usize, _nrows: usize, ncols: usize) -> Coord {
