@@ -1,0 +1,8 @@
+# No hidden files.
+.*
+
+# Don't commit exact versions of every dependency.
+Cargo.lock
+
+# Ignore build directory.
+/target
