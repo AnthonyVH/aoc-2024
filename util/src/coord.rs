@@ -1,4 +1,4 @@
-extern crate nalgebra as na;
+use nalgebra as na;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, strum_macros::EnumIter)]
 pub enum Direction {
@@ -40,12 +40,29 @@ impl Coord {
     pub fn from_column_major_index(idx: usize, nrows: usize, _ncols: usize) -> Coord {
         Coord::from((idx % nrows, idx / nrows))
     }
+
+    pub fn manhattan_distance(&self, other: &Coord) -> usize {
+        (self.row.abs_diff(other.row) + self.col.abs_diff(other.col))
+            .try_into()
+            .unwrap()
+    }
 }
 
 impl std::ops::Add for Coord {
     type Output = Self;
 
     fn add(self, other: Self) -> Self {
+        Self {
+            row: self.row + other.row,
+            col: self.col + other.col,
+        }
+    }
+}
+
+impl std::ops::Add<&Coord> for Coord {
+    type Output = Self;
+
+    fn add(self, other: &Self) -> Self {
         Self {
             row: self.row + other.row,
             col: self.col + other.col,
@@ -159,18 +176,24 @@ impl std::ops::Mul<Coord> for u8 {
     }
 }
 
-impl From<Direction> for Coord {
-    fn from(item: Direction) -> Coord {
-        match item {
+impl Direction {
+    pub const fn to_coord(&self) -> Coord {
+        match self {
             Direction::East => Coord { row: 0, col: 1 },
             Direction::West => Coord { row: 0, col: -1 },
             Direction::North => Coord { row: -1, col: 0 },
             Direction::South => Coord { row: 1, col: 0 },
-            Direction::NorthEast => Coord::from(Direction::North) + Coord::from(Direction::East),
-            Direction::NorthWest => Coord::from(Direction::North) + Coord::from(Direction::West),
-            Direction::SouthEast => Coord::from(Direction::South) + Coord::from(Direction::East),
-            Direction::SouthWest => Coord::from(Direction::South) + Coord::from(Direction::West),
+            Direction::NorthEast => Coord { row: -1, col: 1 },
+            Direction::NorthWest => Coord { row: -1, col: -1 },
+            Direction::SouthEast => Coord { row: 1, col: 1 },
+            Direction::SouthWest => Coord { row: 1, col: -1 },
         }
+    }
+}
+
+impl From<Direction> for Coord {
+    fn from(item: Direction) -> Coord {
+        item.to_coord()
     }
 }
 
@@ -298,6 +321,16 @@ where
     ) -> Self::OutputMut {
         let pair = Into::<(usize, usize)>::into(self);
         pair.get_unchecked_mut(matrix)
+    }
+}
+
+impl std::fmt::Display for Coord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(")
+            .and_then(|_| self.row.fmt(f))
+            .and_then(|_| write!(f, ", "))
+            .and_then(|_| self.col.fmt(f))
+            .and_then(|_| write!(f, ")"))
     }
 }
 

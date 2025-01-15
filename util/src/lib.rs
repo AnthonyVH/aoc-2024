@@ -2,12 +2,14 @@ mod bit;
 mod coord;
 mod file;
 mod get;
+mod maze;
 mod slice;
 
 pub use bit::*;
 pub use coord::*;
 pub use file::*;
 pub use get::*;
+pub use maze::*;
 pub use slice::*;
 
 pub fn init(is_test: bool) {
