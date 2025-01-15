@@ -1,5 +1,6 @@
 mod bit;
 mod coord;
+mod disjoint_set;
 mod file;
 mod get;
 mod graph;
@@ -8,6 +9,7 @@ mod slice;
 
 pub use bit::*;
 pub use coord::*;
+pub use disjoint_set::*;
 pub use file::*;
 pub use get::*;
 pub use graph::*;

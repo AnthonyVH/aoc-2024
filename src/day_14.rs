@@ -1,6 +1,5 @@
 use nalgebra as na;
 use rayon::prelude::*;
-use rustc_hash::FxHashMap as HashMap;
 
 #[derive(Debug)]
 struct Robot {
@@ -84,52 +83,95 @@ pub fn part_a(input: &str) -> usize {
     part_a_configurable(input, ROOM_SIZE)
 }
 
-fn are_robots_clustered(robots: &[Robot], num_steps: usize, required_set_size: usize) -> bool {
-    // Create a disjoint set to keep track of adjacent positions.
-    // NOTE: We don't need/want to store any extra data in this set, so make
-    // the type as short as possible.
-    let mut set: partitions::PartitionVec<_> = partitions::partition_vec![(); robots.len()];
-    let mut is_occupied: HashMap<util::Coord, usize> =
-        HashMap::with_capacity_and_hasher(robots.len(), rustc_hash::FxBuildHasher);
+#[derive(Clone)]
+struct ClusteringCache {
+    set: util::DisjointSetWithMaxSize,
+    occupied: bit_vec::BitVec,
+}
 
-    // NOTE: It would be great to do an early exit if we know there will be
-    // more sets than required, i.e. the iteration won't be succesfull.
-    // Unfortunately querying the number of sets is O(n), so this would just
-    // massively slow things down.
-    static SEARCH_DIRS: [util::Coord; 4] = [
-        util::Direction::North.to_coord(),
-        util::Direction::East.to_coord(),
-        util::Direction::South.to_coord(),
-        util::Direction::West.to_coord(),
-    ];
+impl ClusteringCache {
+    fn new() -> ClusteringCache {
+        // Create a disjoint set for the whole grid, it's only 10k elements.
+        // This way we don't have to keep track of which robot occupies which
+        // cell, which would be necessary if we would join a set of robots
+        // together instead.
+        ClusteringCache {
+            set: util::DisjointSetWithMaxSize::new((ROOM_SIZE.row * ROOM_SIZE.col) as u16),
+            occupied: bit_vec::BitVec::from_elem((ROOM_SIZE.row * ROOM_SIZE.col) as usize, false),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn reset(&mut self) {
+        self.set.reset();
+        self.occupied = bit_vec::BitVec::from_elem((ROOM_SIZE.row * ROOM_SIZE.col) as usize, false);
+    }
+
+    /// Helper function to convert a position to its index in the disjoint set.
+    fn to_index(pos: util::Coord) -> u16 {
+        (pos.row * ROOM_SIZE.col + pos.col) as u16
+    }
+}
+
+fn are_robots_clustered(robots: &[Robot], num_steps: usize, required_set_size: usize) -> bool {
+    // NOTE: It's slower to check for neighbors while calculating robot
+    // positions, because in that case, the neighbors need to be checked in 4
+    // directions instead of 2.
+
+    // NOTE: Passing in a cache when running in parallel with rayon slows things
+    // down a lot.
+    let mut clustering_cache = ClusteringCache::new();
+    let mut idx_and_pos: Vec<(u16, (u8, u8))> = vec![(0, (0, 0)); robots.len()];
 
     for (idx, robot) in robots.iter().enumerate() {
         let pos = robot.step(&ROOM_SIZE, num_steps as isize);
-        is_occupied.insert(pos, idx);
+        let pos_idx = ClusteringCache::to_index(pos);
+        idx_and_pos[idx] = (pos_idx as u16, (pos.row as u8, pos.col as u8));
+        clustering_cache.occupied.set(pos_idx as usize, true);
+    }
 
-        // Find occupied neighbors.
-        // NOTE: This counts every robot, i.e. if multiple robots are on the
-        // same position, they will all be counted individually.
+    static SEARCH_DIRS: [util::Coord; 2] = [
+        util::Direction::East.to_coord(),
+        util::Direction::South.to_coord(),
+    ];
+
+    for (pos_idx, (row, col)) in idx_and_pos.into_iter() {
+        let pos = util::Coord {
+            row: row as isize,
+            col: col as isize,
+        };
+
         for offset in SEARCH_DIRS.iter() {
             let neighbor_pos = pos + offset;
-            if let Some(neighbor_idx) = is_occupied.get(&neighbor_pos) {
-                set.union(idx, *neighbor_idx);
+            if !neighbor_pos.bounded_by(&ROOM_SIZE) {
+                continue;
+            }
+
+            let neighbor_idx = ClusteringCache::to_index(neighbor_pos);
+            if clustering_cache
+                .occupied
+                .get(neighbor_idx as usize)
+                .unwrap()
+            {
+                clustering_cache.set.union(pos_idx, neighbor_idx);
             }
         }
     }
 
     // Find the largest set.
-    let max_set_size = set.all_sets().map(|e| e.count()).max().unwrap();
-    let is_clustered = max_set_size > required_set_size;
+    let is_clustered = clustering_cache.set.max_set_size() as usize > required_set_size;
     if is_clustered {
-        let mut positions =
-            na::DMatrix::from_element(ROOM_SIZE.row as usize, ROOM_SIZE.col as usize, '.');
-        for pos in is_occupied.keys() {
-            positions[pos] = '#';
-        }
-        log::debug!("{}", positions);
+        log::debug!(
+            "max cluster size: {}{}",
+            clustering_cache.set.max_set_size(),
+            na::DMatrix::<bool>::from_row_iterator(
+                ROOM_SIZE.row as usize,
+                ROOM_SIZE.col as usize,
+                clustering_cache.occupied.iter()
+            )
+            .map(|e| if e { '#' } else { '.' })
+        );
     }
-
     is_clustered
 }
 
@@ -154,7 +196,7 @@ pub fn part_b(input: &str) -> usize {
         let first_match = (0..NUM_PARALLEL_STEPS)
             .par_bridge() // NOTE: This is somehow faster than into_par_iter().
             .find_first(|offset| {
-                are_robots_clustered(&robots, num_steps + *offset, required_set_size)
+                are_robots_clustered(&robots, num_steps + offset, required_set_size)
             });
 
         match first_match {
