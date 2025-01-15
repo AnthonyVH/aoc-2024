@@ -31,12 +31,12 @@ impl Coord {
         (self.row < bound.row) && (self.col < bound.col)
     }
 
-    pub fn from_row_major_index(idx: usize, nrows: usize, ncols: usize) -> Coord {
-        Coord::from((idx / ncols, idx % nrows))
+    pub fn from_row_major_index(idx: usize, _nrows: usize, ncols: usize) -> Coord {
+        Coord::from((idx / ncols, idx % ncols))
     }
 
-    pub fn from_column_major_index(idx: usize, nrows: usize, ncols: usize) -> Coord {
-        Coord::from((idx % nrows, idx / ncols))
+    pub fn from_column_major_index(idx: usize, nrows: usize, _ncols: usize) -> Coord {
+        Coord::from((idx % nrows, idx / nrows))
     }
 }
 
@@ -183,8 +183,22 @@ impl<T> std::ops::Index<Coord> for na::DMatrix<T> {
     }
 }
 
+impl<T> std::ops::Index<&Coord> for na::DMatrix<T> {
+    type Output = T;
+
+    fn index(&self, index: &Coord) -> &Self::Output {
+        &self[Into::<(usize, usize)>::into(index)]
+    }
+}
+
 impl<T> std::ops::IndexMut<Coord> for na::DMatrix<T> {
     fn index_mut(&mut self, index: Coord) -> &mut Self::Output {
+        &mut self[Into::<(usize, usize)>::into(index)]
+    }
+}
+
+impl<T> std::ops::IndexMut<&Coord> for na::DMatrix<T> {
+    fn index_mut(&mut self, index: &Coord) -> &mut Self::Output {
         &mut self[Into::<(usize, usize)>::into(index)]
     }
 }
@@ -205,6 +219,42 @@ where
     unsafe fn get_unchecked(self, matrix: &'a na::Matrix<T, R, C, S>) -> Self::Output {
         let pair = Into::<(usize, usize)>::into(self);
         pair.get_unchecked(matrix)
+    }
+}
+
+impl<'a, T: 'a, R, C, S> na::base::indexing::MatrixIndex<'a, T, R, C, S> for &Coord
+where
+    R: na::Dim,
+    C: na::Dim,
+    S: na::RawStorage<T, R, C>,
+{
+    type Output = &'a T;
+
+    fn contained_by(&self, matrix: &na::Matrix<T, R, C, S>) -> bool {
+        let pair = Into::<(usize, usize)>::into(*self);
+        pair.contained_by(matrix)
+    }
+
+    unsafe fn get_unchecked(self, matrix: &'a na::Matrix<T, R, C, S>) -> Self::Output {
+        let pair = Into::<(usize, usize)>::into(self);
+        pair.get_unchecked(matrix)
+    }
+}
+
+impl<'a, T: 'a, R, C, S> na::base::indexing::MatrixIndexMut<'a, T, R, C, S> for &Coord
+where
+    R: na::Dim,
+    C: na::Dim,
+    S: na::RawStorageMut<T, R, C>,
+{
+    type OutputMut = &'a mut T;
+
+    unsafe fn get_unchecked_mut(
+        self,
+        matrix: &'a mut nalgebra::Matrix<T, R, C, S>,
+    ) -> Self::OutputMut {
+        let pair = Into::<(usize, usize)>::into(*self);
+        pair.get_unchecked_mut(matrix)
     }
 }
 
