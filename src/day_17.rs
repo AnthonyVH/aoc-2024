@@ -122,9 +122,20 @@ impl Computer {
         view.into()
     }
 
-    fn run(&self, mut state: State) -> Vec<u8> {
-        let mut result = Vec::new();
+    fn run(&self, state: State) -> Vec<u8> {
+        let mut output = Vec::new();
+        let mut push_to_output = |out: u8| -> bool {
+            output.push(out);
+            true
+        };
+        self._run_with_callback(state, &mut push_to_output);
+        output
+    }
 
+    fn _run_with_callback<FnOutput>(&self, mut state: State, mut fn_output: FnOutput) -> bool
+    where
+        FnOutput: FnMut(u8) -> bool,
+    {
         macro_rules! do_div {
             ($reg_src: ident, $reg_dst: ident, $operand: ident) => {{
                 *state.get_mut(Register::$reg_dst) =
@@ -146,7 +157,12 @@ impl Computer {
                     }
                 }
                 Instruction::Bxc => *state.get_mut(Register::B) ^= state.get(Register::C),
-                Instruction::Out(operand) => result.push((operand.value(&state) % 8) as u8),
+                Instruction::Out(operand) => {
+                    let keep_running = (fn_output)((operand.value(&state) % 8) as u8);
+                    if !keep_running {
+                        return false;
+                    }
+                }
                 Instruction::Bdv(operand) => do_div!(A, B, operand),
                 Instruction::Cdv(operand) => do_div!(A, C, operand),
             }
@@ -155,203 +171,95 @@ impl Computer {
             log::trace!("Advancing to PC {}", state.program_counter);
         }
 
-        result
+        true
     }
 
-    /// Run the instruction in reverse to determine which value is required in
-    /// register A in order to have the program replicate its own instructions
-    /// in the output.
-    fn run_reversed(&self) -> usize {
-        // Only tested to work with a single jump at the end of the program.
-        assert!(self.instructions.len() % 2 == 0);
-        assert!(
-            self.read_instruction(self.instructions.len() - 2)
-                == Instruction::Jnz(LiteralOperand(0))
-        );
+    fn reversed_backtracking(&self) -> usize {
+        // NOTE: This is a crappy implementation that only works for a very
+        // specific input, because I couldn't get a reverse running
+        // implementation to work properly.
+        let a_shifts: Vec<_> = (0..self.instructions.len())
+            .step_by(2)
+            .filter_map(|ctr| {
+                let instruction = self.read_instruction(ctr);
+                match instruction {
+                    Instruction::Adv(operant) => Some(operant),
+                    _ => None,
+                }
+            })
+            .collect();
+        assert_eq!(a_shifts.len(), 1);
 
-        // Never execute the jump instruction at the end.
-        let last_instruction_idx = self.instructions.len() - 2 - 2;
+        // We need A to be shifted by a fixed amount.
+        assert_eq!(a_shifts[0].mapped_register(), None);
 
-        // The A register must be zero at the end of the program. We assume the
-        // other registers are as well.
-        let mut state = State {
-            program_counter: last_instruction_idx,
+        // Find solution backwards, assuming that B & C registers are zero.
+        let state = State {
+            program_counter: 0,
             registers: [0, 0, 0],
         };
-        let mut num_generated_outputs = 0;
+        let num_bit_shifts = a_shifts[0].value(&state) as u32;
+        let mut output = Vec::new();
+        self._reversed_backtracking_recurse(
+            num_bit_shifts,
+            state,
+            self.instructions.len(),
+            &mut output,
+        )
+        .unwrap()
+    }
 
-        while (num_generated_outputs != self.instructions.len())
-            || (state.program_counter != last_instruction_idx)
-        {
-            const THREE_LSB_MASK: usize = 7;
-
-            // Compute the inverse of each function.
-            log::trace!(
-                "Executing {:?} (PC: {})",
-                self.read_instruction(state.program_counter),
-                state.program_counter
-            );
-            if state.program_counter == last_instruction_idx {
-                log::debug!("Starting from end, A = {}", state.get(Register::A));
-            }
-
-            let instruction = self.read_instruction(state.program_counter);
-
-            macro_rules! invert_div {
-                ($reg_src: ident, $reg_dst: ident, $operand: ident) => {{
-                    assert!($operand.mapped_register() != Some(Register::$reg_dst));
-                    let denominator = usize::pow(2, $operand.value(&state) as u32);
-                    let reversed =
-                    match Register::$reg_src == Register::$reg_dst {
-                        true => {
-                            // If source and destination are the same, then we can't know
-                            // the LSBs so set them to zero.
-                            state.get(Register::$reg_src) * denominator
-                        },
-                        false => {
-                            // We might know LSBs about the source register. Keep them.
-                            (state.get(Register::$reg_dst) * denominator)
-                                + (state.get(Register::$reg_src) & !(denominator - 1))
-                        }
-                    };
-
-                    log::debug!(
-                        "[{:?}] Reversing {:?} = {:?} / {} = {} / {}, set {:?} = {}",
-                        instruction,
-                        Register::$reg_dst,
-                        Register::$reg_src,
-                        denominator,
-                        state.get(Register::$reg_src),
-                        denominator,
-                        Register::$reg_src,
-                        reversed
-                    );
-
-                    *state.get_mut(Register::$reg_src) = reversed;
-
-                    // TODO: This is all wrong...
-
-                    // Shift "dst" back by given amount and store back in "src".
-                    // If the amount to shift is determined by the "dst" register,
-                    // then we can't find the original value.
-                    //let reversed =
-                    //    (state.get(Register::$reg_dst) * div) | (state.get(Register::$reg_src) & !mask);
-                }};
-            }
-
-            match instruction {
-                Instruction::Adv(operand) => invert_div!(A, A, operand),
-                Instruction::Bxl(operand) => {
-                    // Inverse of XOR is XOR.
-                    log::debug!(
-                        "[{:?}] Set {:?} to {} ^ {} = {}",
-                        instruction,
-                        Register::B,
-                        state.get(Register::B),
-                        operand.value(),
-                        state.get(Register::B) ^ operand.value()
-                    );
-                    *state.get_mut(Register::B) ^= operand.value();
-                }
-                Instruction::Bst(operand) => {
-                    // The value of B should be at most 3 bits, since in a
-                    // forward run it gets set to an operand modulo 8.
-                    let value_b = state.get(Register::B);
-                    assert!(value_b & !THREE_LSB_MASK == 0);
-
-                    // Set the bottom 3 bits of the target operand to the
-                    // value stored in B.
-                    match operand.mapped_register() {
-                        None => assert!(operand.value(&state) & THREE_LSB_MASK == value_b),
-                        Some(reg) => {
-                            log::debug!(
-                                "[{:?}] Set {:?} to {:?} & {} | {:?} = {} & {} | {} = {}",
-                                instruction,
-                                reg,
-                                reg,
-                                THREE_LSB_MASK,
-                                Register::B,
-                                state.get(reg),
-                                THREE_LSB_MASK,
-                                value_b,
-                                (state.get(reg) & !THREE_LSB_MASK) | value_b
-                            );
-                            *state.get_mut(reg) = (state.get(reg) & !THREE_LSB_MASK) | value_b;
-                        }
-                    }
-
-                    // We can't possibly know what value B had before this
-                    // though. Just set it to 0 for now.
-                    // TODO: For sure this is going to cause issues...
-                    *state.get_mut(Register::B) = 0;
-                }
-                Instruction::Jnz(_) => unreachable!(),
-                Instruction::Bxc => {
-                    // Inverse of XOR is XOR.
-                    log::debug!(
-                        "[{:?}] Set {:?} to {:?} ^ {:?} = {} ^ {} = {}",
-                        instruction,
-                        Register::B,
-                        Register::B,
-                        Register::C,
-                        state.get(Register::B),
-                        state.get(Register::C),
-                        state.get(Register::B) ^ state.get(Register::C),
-                    );
-                    *state.get_mut(Register::B) ^= state.get(Register::C);
-                }
-                Instruction::Out(operand) => {
-                    // Set the bottom bits of the operand to the expected output.
-                    num_generated_outputs += 1;
-                    let idx = self.instructions.len() - num_generated_outputs;
-
-                    match operand.mapped_register() {
-                        Some(reg) => {
-                            log::debug!(
-                                "[{:?}] Output {}, {:?} was {}, now {}",
-                                instruction,
-                                self.instructions[idx],
-                                reg,
-                                state.get(reg),
-                                (state.get(reg) & !THREE_LSB_MASK)
-                                    | self.instructions[idx] as usize
-                            );
-                            *state.get_mut(reg) = (state.get(reg) & !THREE_LSB_MASK)
-                                | self.instructions[idx] as usize;
-                        }
-                        None => {
-                            let value = (operand.value(&state) % 8) as u8;
-                            assert!(value == self.instructions[idx]);
-                        }
-                    }
-                }
-                Instruction::Bdv(operand) => invert_div!(A, B, operand),
-                Instruction::Cdv(operand) => invert_div!(A, C, operand),
-            }
-
-            state.program_counter = state
-                .program_counter
-                .checked_sub(2)
-                .unwrap_or(last_instruction_idx);
-            log::trace!("Jumping back to PC {}", state.program_counter);
+    fn _reversed_backtracking_recurse(
+        &self,
+        num_bit_shifts: u32,
+        mut state: State,
+        num_outputs_remaining: usize,
+        output: &mut Vec<u8>,
+    ) -> Option<usize> {
+        if num_outputs_remaining == 0 {
+            return Some(state.get(Register::A));
         }
 
-        // NOTE: When we get here B and C should be 0.
-        log::debug!("Registers: {:?}", state.registers);
+        let prev_a_shifted: usize = state.get(Register::A) << num_bit_shifts;
+        for a_lsbs in 0..2usize.pow(num_bit_shifts) {
+            *state.get_mut(Register::A) = prev_a_shifted | a_lsbs;
 
-        let forward_output = self.run(State {
-            program_counter: 0,
-            registers: state.registers,
-        });
-        log::debug!(
-            "Found {:?} = {}, instructions: {:?}, forward run: {:?}",
-            Register::A,
-            state.get(Register::A),
-            self.instructions,
-            forward_output
-        );
-        assert!(forward_output == self.instructions);
-        state.get(Register::A)
+            // If this state results in the wanted output, then recurse, if not
+            // try the next option.
+            let mut output_idx = num_outputs_remaining - 1;
+            let check_ouput = |output: u8| -> bool {
+                let output_correct = self.instructions[output_idx] == output;
+                output_idx += 1;
+                output_correct
+            };
+
+            let output_ok = self._run_with_callback(state, check_ouput);
+            log::debug!(
+                "# outputs remaining: {:2}, reg A: {:16} => output {}",
+                num_outputs_remaining,
+                state.get(Register::A),
+                match output_ok {
+                    true => String::from("ok"),
+                    false => format!("# {} wrong", num_outputs_remaining - output_idx),
+                }
+            );
+
+            if !output_ok {
+                continue;
+            }
+
+            let next = self._reversed_backtracking_recurse(
+                num_bit_shifts,
+                state,
+                num_outputs_remaining - 1,
+                output,
+            );
+            if next.is_some() {
+                return next;
+            }
+        }
+
+        None
     }
 }
 
@@ -401,7 +309,7 @@ pub fn part_b(input: &str) -> usize {
             .map(|idx| format!("{:?}", computer.read_instruction(idx)))
             .join("\n")
     );
-    computer.run_reversed()
+    computer.reversed_backtracking()
 }
 
 #[cfg(test)]
