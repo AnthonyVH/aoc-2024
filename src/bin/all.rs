@@ -95,6 +95,8 @@ fn main() {
         create_runner!(day_22, part_b),
         create_runner!(day_23, part_a),
         create_runner!(day_23, part_b),
+        create_runner!(day_24, part_a),
+        create_runner!(day_24, part_b),
     ];
 
     let mut total: std::time::Duration = std::time::Duration::new(0, 0);
