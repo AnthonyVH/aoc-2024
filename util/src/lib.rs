@@ -38,3 +38,22 @@ where
     let result = std::panic::catch_unwind(|| test());
     assert!(result.is_ok())
 }
+
+#[macro_export]
+macro_rules! run_day {
+    ($day: ident) => {{
+        use aoc_2024::$day;
+
+        util::init!();
+
+        // Take last two characters of identifier. Should be the day's number.
+        let mut day_repr = stringify!($day);
+        day_repr = &day_repr[day_repr.len() - 2..];
+
+        let input_file = format!("{}.txt", stringify!($day));
+        let input: String = util::read_resource(&input_file).unwrap();
+
+        println!("[Day {} - Part A] {}", day_repr, aoc_2024::$day::part_a(&input));
+        println!("[Day {} - Part B] {}", day_repr, aoc_2024::$day::part_b(&input));
+    }};
+}

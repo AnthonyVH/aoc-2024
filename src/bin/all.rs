@@ -34,7 +34,7 @@ macro_rules! create_runner {
     ($day:ident, $part:ident) => {{
         let input_file = format!("{}.txt", stringify!($day));
         let input = util::read_resource(&input_file).unwrap();
-        let day_str: String = stringify!($day).to_string();
+        let day_str = stringify!($day);
 
         Runner {
             name: format!(
