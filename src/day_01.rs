@@ -4,7 +4,7 @@ fn input_to_lists(input: &str) -> (Vec<u32>, Vec<u32>) {
 
     input
         .lines()
-        .map(|e| e.trim().split_once(' ').unwrap())
+        .map(|e| e.split_once(' ').unwrap())
         .for_each(|(l, r)| {
             col_left.push(str::parse::<u32>(l.trim()).unwrap());
             col_right.push(str::parse::<u32>(r.trim()).unwrap());
@@ -38,22 +38,15 @@ pub fn part_b(input: &str) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    const INPUT: &'static str = "3   4
-                                 4   3
-                                 2   5
-                                 1   3
-                                 3   9
-                                 3   3";
-
     #[test]
     fn example_a() {
         let expected: u32 = 11;
-        assert_eq!(crate::day_01::part_a(INPUT), expected);
+        assert_eq!(crate::day_01::part_a(&util::read_resource("example_01.txt").unwrap()), expected);
     }
 
     #[test]
     fn example_b() {
         let expected: u32 = 31;
-        assert_eq!(crate::day_01::part_b(INPUT), expected);
+        assert_eq!(crate::day_01::part_b(&util::read_resource("example_01.txt").unwrap()), expected);
     }
 }

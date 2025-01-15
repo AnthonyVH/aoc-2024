@@ -81,25 +81,25 @@ impl std::str::FromStr for Problem {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut result = Problem::new();
+        let mut lines = s.lines();
 
-        let first_section = s.lines().take_while(|e| !e.trim().is_empty());
-        for line in first_section {
-            let (before, after) = line
-                .trim()
-                .split("|")
-                .map(|e| e.parse().unwrap())
-                .next_tuple()
-                .unwrap();
+        lines
+            .by_ref()
+            .take_while(|e| !e.is_empty())
+            .for_each(|line| {
+                let (before, after) = line
+                    .split("|")
+                    .map(|e| e.parse().unwrap())
+                    .next_tuple()
+                    .unwrap();
 
-            // Create HashMap entry if it doesn't exist.
-            result.print_after.entry(after).or_default().push(before);
-        }
+                // Create HashMap entry if it doesn't exist.
+                result.print_after.entry(after).or_default().push(before);
+            });
 
-        // TODO: How to do this the nice way?
-        let second_section = s.lines().skip_while(|e| !e.trim().is_empty()).skip(1);
-
-        result.updates = second_section
-            .map(|line| line.trim().split(",").map(|e| e.parse().unwrap()).collect())
+        result.updates = lines
+            .skip_while(|e| e.is_empty())
+            .map(|line| line.split(",").map(|e| e.parse().unwrap()).collect())
             .collect();
 
         Ok(result)
@@ -129,44 +129,21 @@ pub fn part_b(input: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    const INPUT: &'static str = "47|53
-                                 97|13
-                                 97|61
-                                 97|47
-                                 75|29
-                                 61|13
-                                 75|53
-                                 29|13
-                                 97|29
-                                 53|29
-                                 61|53
-                                 97|53
-                                 61|29
-                                 47|13
-                                 75|47
-                                 97|75
-                                 47|61
-                                 75|61
-                                 47|29
-                                 75|13
-                                 53|13
-
-                                 75,47,61,53,29
-                                 97,61,53,29,13
-                                 75,29,13
-                                 75,97,47,61,53
-                                 61,13,29
-                                 97,13,75,29,47";
-
     #[test]
     fn example_a() {
         let expected: usize = 143;
-        assert_eq!(crate::day_05::part_a(INPUT), expected);
+        assert_eq!(
+            crate::day_05::part_a(&util::read_resource("example_05.txt").unwrap()),
+            expected
+        );
     }
 
     #[test]
     fn example_b() {
         let expected: usize = 123;
-        assert_eq!(crate::day_05::part_b(INPUT), expected);
+        assert_eq!(
+            crate::day_05::part_b(&util::read_resource("example_05.txt").unwrap()),
+            expected
+        );
     }
 }

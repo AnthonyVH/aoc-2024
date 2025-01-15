@@ -1,12 +1,7 @@
 fn input_to_reports(input: &str) -> Vec<Vec<i32>> {
     input
         .lines()
-        .map(|e| {
-            e.trim()
-                .split_whitespace()
-                .map(|w| w.parse().unwrap())
-                .collect()
-        })
+        .map(|e| e.split_whitespace().map(|w| w.parse().unwrap()).collect())
         .collect()
 }
 
@@ -57,22 +52,21 @@ pub fn part_b(input: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    const INPUT: &'static str = "7 6 4 2 1
-                                 1 2 7 8 9
-                                 9 7 6 2 1
-                                 1 3 2 4 5
-                                 8 6 4 4 1
-                                 1 3 6 7 9";
-
     #[test]
     fn example_a() {
         let expected: usize = 2;
-        assert_eq!(crate::day_02::part_a(INPUT), expected);
+        assert_eq!(
+            crate::day_02::part_a(&util::read_resource("example_02.txt").unwrap()),
+            expected
+        );
     }
 
     #[test]
     fn example_b() {
         let expected: usize = 4;
-        assert_eq!(crate::day_02::part_b(INPUT), expected);
+        assert_eq!(
+            crate::day_02::part_b(&util::read_resource("example_02.txt").unwrap()),
+            expected
+        );
     }
 }

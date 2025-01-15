@@ -35,17 +35,13 @@ pub fn part_b(input: &str) -> u32 {
 mod tests {
     #[test]
     fn example_a() {
-        const INPUT: &'static str =
-            "xmul(2,4)%&mul[3,7]!@^do_not_mul(5,5)+mul(32,64]then(mul(11,8)mul(8,5))";
         let expected: u32 = 161;
-        assert_eq!(crate::day_03::part_a(INPUT), expected);
+        assert_eq!(crate::day_03::part_a(&util::read_resource("example_03-part_a.txt").unwrap()), expected);
     }
 
     #[test]
     fn example_b() {
-        const INPUT: &'static str =
-            "xmul(2,4)&mul[3,7]!^don't()_mul(5,5)+mul(32,64](mul(11,8)undo()?mul(8,5))";
         let expected: u32 = 48;
-        assert_eq!(crate::day_03::part_b(INPUT), expected);
+        assert_eq!(crate::day_03::part_b(&util::read_resource("example_03-part_b.txt").unwrap()), expected);
     }
 }

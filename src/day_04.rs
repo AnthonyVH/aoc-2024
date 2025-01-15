@@ -52,13 +52,13 @@ impl std::str::FromStr for WordSearch {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let rows = s.lines().count();
-        let cols = s.lines().next().unwrap().trim().len();
+        let cols = s.lines().next().unwrap().len();
         Ok(Self {
             data: MatrixWrapper(na::DMatrix::from_row_iterator(
                 rows,
                 cols,
                 s.lines()
-                    .flat_map(|e| e.trim().as_bytes().iter().map(|e: &u8| *e)),
+                    .flat_map(|e| e.as_bytes().iter().map(|e: &u8| *e)),
             )),
         })
     }
@@ -136,26 +136,15 @@ pub fn part_b(input: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    const INPUT: &'static str = "MMMSXXMASM
-                                 MSAMXMSMSA
-                                 AMXSXMAAMM
-                                 MSAMASMSMX
-                                 XMASAMXAMM
-                                 XXAMMXXAMA
-                                 SMSMSASXSS
-                                 SAXAMASAAA
-                                 MAMMMXMMMM
-                                 MXMXAXMASX";
-
     #[test]
     fn example_a() {
         let expected: usize = 18;
-        assert_eq!(crate::day_04::part_a(INPUT), expected);
+        assert_eq!(crate::day_04::part_a(&util::read_resource("example_04.txt").unwrap()), expected);
     }
 
     #[test]
     fn example_b() {
         let expected: usize = 9;
-        assert_eq!(crate::day_04::part_b(INPUT), expected);
+        assert_eq!(crate::day_04::part_b(&util::read_resource("example_04.txt").unwrap()), expected);
     }
 }

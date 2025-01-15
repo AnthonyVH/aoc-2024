@@ -17,7 +17,7 @@ util = { path = "util" }
 resolver = "2"
 members = ["util"]
 
-[profile.bench]
+[profile.flamegraph]
 # Release with debug info.
 inherits = "release"
 debug = true
