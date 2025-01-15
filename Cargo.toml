@@ -18,6 +18,7 @@ rustc-hash = "2.1"
 strum = "0.26"
 strum_macros = "0.26"
 util = { path = "util" }
+yada = "0.5"
 
 [workspace]
 resolver = "2"
@@ -100,4 +101,8 @@ harness = false
 
 [[bench]]
 name = "day_17"
+harness = false
+
+[[bench]]
+name = "day_19"
 harness = false
