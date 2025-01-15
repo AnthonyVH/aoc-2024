@@ -1,5 +1,5 @@
 struct RunResult {
-    solution: usize,
+    solution: String,
     duration: std::time::Duration,
 }
 
@@ -10,12 +10,12 @@ struct Runner {
 
 fn invoke_timed<T>(invoker: T) -> RunResult
 where
-    T: Fn() -> usize,
+    T: Fn() -> String,
 {
     // Invoke a few times and report median.
     const NUM_RUNS: usize = 11;
     let mut durations: Vec<std::time::Duration> = Vec::new();
-    let mut solution = 0;
+    let mut solution = String::new();
 
     for _ in 0..NUM_RUNS {
         let invoke_start = std::time::Instant::now();
@@ -42,7 +42,9 @@ macro_rules! create_runner {
                 day_str[day_str.len() - 2..].to_string(),
                 stringify!($part).to_uppercase().pop().unwrap()
             ),
-            invoker: Box::new(move || invoke_timed(|| aoc_2024::$day::$part(&input) as usize)),
+            invoker: Box::new(move || {
+                invoke_timed(|| format!("{}", aoc_2024::$day::$part(&input)))
+            }),
         }
     }};
 }
@@ -81,6 +83,8 @@ fn main() {
         create_runner!(day_15, part_b),
         create_runner!(day_16, part_a),
         create_runner!(day_16, part_b),
+        create_runner!(day_17, part_a),
+        //create_runner!(day_17, part_b),
     ];
 
     let mut total: std::time::Duration = std::time::Duration::new(0, 0);
@@ -89,7 +93,7 @@ fn main() {
         let us = result.duration.as_micros();
         total += result.duration;
         println!(
-            "{}: {:<15}{:10} µs{:>2}",
+            "{:15}: {:<18}{:7} µs{:>2}",
             runner.name,
             result.solution,
             us,
