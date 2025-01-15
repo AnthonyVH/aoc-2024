@@ -1,5 +1,6 @@
 use nalgebra as na;
-use rayon::prelude::*;
+use std::simd::num::*;
+use std::simd::*;
 
 #[derive(Debug)]
 struct Robot {
@@ -28,6 +29,27 @@ impl std::str::FromStr for Robot {
             velocity: coords.next().unwrap(),
         })
     }
+}
+
+fn parse_robot_data(line: &str, room_size: util::Coord) -> ((u8, u8), (u8, u8)) {
+    let ascii = line.as_bytes();
+
+    let mut start_pos = ascii.iter().position(|&e| e == b'=').unwrap() + 1;
+    let (pos_col, offset_next): (u8, _) = atoi_simd::parse_any_pos(&ascii[start_pos..]).unwrap();
+    start_pos += offset_next + 1;
+    let (pos_row, offset_next): (u8, _) = atoi_simd::parse_any_pos(&ascii[start_pos..]).unwrap();
+
+    start_pos += offset_next + 1;
+    start_pos += ascii[start_pos..].iter().position(|&e| e == b'=').unwrap() + 1;
+    let (mut vel_col, offset_next): (i8, _) = atoi_simd::parse_any(&ascii[start_pos..]).unwrap();
+    start_pos += offset_next + 1;
+    let (mut vel_row, _): (i8, _) = atoi_simd::parse_any(&ascii[start_pos..]).unwrap();
+
+    // Ensure all velocities are positive.
+    vel_col += (vel_col < 0) as i8 * room_size.col as i8;
+    vel_row += (vel_row < 0) as i8 * room_size.row as i8;
+
+    ((pos_col, pos_row), (vel_col as u8, vel_row as u8))
 }
 
 impl Robot {
@@ -83,127 +105,160 @@ pub fn part_a(input: &str) -> usize {
     part_a_configurable(input, ROOM_SIZE)
 }
 
-#[derive(Clone)]
-struct ClusteringCache {
-    set: util::DisjointSetWithMaxSize,
-    occupied: bit_vec::BitVec,
+const fn variance_swizzle_indices<const SIMD_LANES: usize, const OFFSET: usize>(
+) -> [usize; SIMD_LANES] {
+    let mut result = [0; SIMD_LANES];
+    let mut i = 0; // Can't use a for-loop as that depends on traits, which can't be used in const fn.
+    while i < SIMD_LANES {
+        result[i] = i;
+        i += 1;
+    }
+    result
 }
 
-impl ClusteringCache {
-    fn new() -> ClusteringCache {
-        // Create a disjoint set for the whole grid, it's only 10k elements.
-        // This way we don't have to keep track of which robot occupies which
-        // cell, which would be necessary if we would join a set of robots
-        // together instead.
-        ClusteringCache {
-            set: util::DisjointSetWithMaxSize::new((ROOM_SIZE.row * ROOM_SIZE.col) as u16),
-            occupied: bit_vec::BitVec::from_elem((ROOM_SIZE.row * ROOM_SIZE.col) as usize, false),
-        }
+fn calculate_dispersion_coefficient<const MODULO: u8>(
+    positions: &[u8],
+    velocities: &[u8],
+    step: u8,
+) -> f32 {
+    // NOTE: Need to use const generics here, because no SIMD instruction exists
+    // to divide/modulo with an integer. Falling back on floating point SIMD
+    // doesn't speed up the calculations. However, by providing the modulus as a
+    // constant, the compiler can convert the modulo operation in a sequence of
+    // multiplications/shifts/subtractions, which does result in a massive
+    // speed-up.
+    assert!(step < MODULO);
+
+    const SIMD_LANES: usize = 16;
+    let simd_mod: Simd<u16, SIMD_LANES> = Simd::splat(MODULO as u16);
+    let simd_step: Simd<u16, SIMD_LANES> = Simd::splat(step as u16);
+
+    let mut simd_mean: Simd<u16, SIMD_LANES> = Simd::splat(0_u16);
+
+    // The data in the variable array doesn't fit in 16-bit words. So store the
+    // result in two 32-bit word arrays. This allows to still process twice as
+    // many elements using 16-bit arithmetic.
+    let mut simd_variance_lo: Simd<u32, { SIMD_LANES / 2 }> = Simd::splat(0_u32);
+    let mut simd_variance_hi: Simd<u32, { SIMD_LANES / 2 }> = Simd::splat(0_u32);
+
+    assert_eq!(positions.len(), velocities.len());
+    let num_chunks = positions.len() / SIMD_LANES;
+
+    for (pos, vel) in positions
+        .chunks_exact(SIMD_LANES)
+        .zip(velocities.chunks_exact(SIMD_LANES))
+    {
+        // If the chunk is not full sized, then the default elements are all 0,
+        // which means they won't change the mean nor variance result.
+        let simd_pos = Simd::from_slice(&pos).cast();
+        let simd_vel = Simd::from_slice(&vel).cast();
+        let simd_loc = (simd_pos + simd_step * simd_vel) % simd_mod;
+
+        simd_mean += simd_loc;
+
+        // Extract the 16-bit arrays into 32-bit ones and accumulate.
+        let simd_loc_lo: Simd<u32, { SIMD_LANES / 2 }> = simd_swizzle!(
+            simd_loc,
+            variance_swizzle_indices::<{ SIMD_LANES / 2 }, { 0 * (SIMD_LANES / 2) }>()
+        )
+        .cast();
+        simd_variance_lo += simd_loc_lo * simd_loc_lo;
+
+        let simd_loc_hi: Simd<u32, { SIMD_LANES / 2 }> = simd_swizzle!(
+            simd_loc,
+            variance_swizzle_indices::<{ SIMD_LANES / 2 }, { 1 * (SIMD_LANES / 2) }>()
+        )
+        .cast();
+        simd_variance_hi += simd_loc_hi * simd_loc_hi;
     }
 
-    #[allow(dead_code)]
-    fn reset(&mut self) {
-        self.set.reset();
-        self.occupied = bit_vec::BitVec::from_elem((ROOM_SIZE.row * ROOM_SIZE.col) as usize, false);
+    // Process elements that did not fit neatly into a chunked slice.
+    let remaining_pos = &positions[num_chunks * SIMD_LANES..];
+    let remaining_vel = &velocities[num_chunks * SIMD_LANES..];
+
+    for (&pos, &vel) in remaining_pos.iter().zip(remaining_vel.iter()) {
+        let loc = (pos as u16 + step as u16 * vel as u16) % MODULO as u16;
+        simd_mean.as_mut_array()[0] += loc;
+        simd_variance_lo.as_mut_array()[0] += loc as u32 * loc as u32;
     }
 
-    /// Helper function to convert a position to its index in the disjoint set.
-    fn to_index(pos: util::Coord) -> u16 {
-        (pos.row * ROOM_SIZE.col + pos.col) as u16
-    }
+    let num_samples = positions.len() as u16;
+    let mean = simd_mean.reduce_sum() / num_samples;
+    let variance = ((simd_variance_lo.reduce_sum() + simd_variance_hi.reduce_sum())
+        / num_samples as u32)
+        - (mean as u32).pow(2);
+
+    // Calculate statistical dispersion as variance divided by mean.
+    variance as f32 / mean as f32
 }
 
-fn are_robots_clustered(robots: &[Robot], num_steps: usize, required_set_size: usize) -> bool {
-    // NOTE: It's slower to check for neighbors while calculating robot
-    // positions, because in that case, the neighbors need to be checked in 4
-    // directions instead of 2.
-
-    // NOTE: Passing in a cache when running in parallel with rayon slows things
-    // down a lot.
-    let mut clustering_cache = ClusteringCache::new();
-    let mut idx_and_pos: Vec<(u16, (u8, u8))> = vec![(0, (0, 0)); robots.len()];
-
-    for (idx, robot) in robots.iter().enumerate() {
-        let pos = robot.step(&ROOM_SIZE, num_steps as isize);
-        let pos_idx = ClusteringCache::to_index(pos);
-        idx_and_pos[idx] = (pos_idx as u16, (pos.row as u8, pos.col as u8));
-        clustering_cache.occupied.set(pos_idx as usize, true);
-    }
-
-    static SEARCH_DIRS: [util::Coord; 2] = [
-        util::Direction::East.to_coord(),
-        util::Direction::South.to_coord(),
-    ];
-
-    for (pos_idx, (row, col)) in idx_and_pos.into_iter() {
-        let pos = util::Coord {
-            row: row as isize,
-            col: col as isize,
-        };
-
-        for offset in SEARCH_DIRS.iter() {
-            let neighbor_pos = pos + offset;
-            if !neighbor_pos.bounded_by(&ROOM_SIZE) {
-                continue;
-            }
-
-            let neighbor_idx = ClusteringCache::to_index(neighbor_pos);
-            if clustering_cache
-                .occupied
-                .get(neighbor_idx as usize)
-                .unwrap()
-            {
-                clustering_cache.set.union(pos_idx, neighbor_idx);
-            }
-        }
-    }
-
-    // Find the largest set.
-    let is_clustered = clustering_cache.set.max_set_size() as usize > required_set_size;
-    if is_clustered {
-        log::debug!(
-            "max cluster size: {}{}",
-            clustering_cache.set.max_set_size(),
-            na::DMatrix::<bool>::from_row_iterator(
-                ROOM_SIZE.row as usize,
-                ROOM_SIZE.col as usize,
-                clustering_cache.occupied.iter()
+fn find_step_with_min_dispersion<const MODULO: u8>(positions: &[u8], velocities: &[u8]) -> u8 {
+    // NOTE: Parallelization this makes things much slower.
+    let num_steps = (0..MODULO)
+        .map(|step| {
+            (
+                step,
+                calculate_dispersion_coefficient::<MODULO>(&positions, &velocities, step),
             )
-            .map(|e| if e { '#' } else { '.' })
-        );
-    }
-    is_clustered
+        })
+        // Floats don't implement Ord, so we have to do this whole dance.
+        .min_by(|lhs, rhs| lhs.1.total_cmp(&rhs.1))
+        .unwrap()
+        .0;
+    log::debug!("min dispersion @ step {}", num_steps);
+    num_steps
 }
 
 pub fn part_b(input: &str) -> usize {
-    // NOTE: This question is bullshit.
-    let robots: Vec<Robot> = input.lines().map(|e| e.parse().unwrap()).collect();
+    // NOTE: This solution is inspired by a comment on Reddit: the repetition of
+    // the X- and Y-locations is independent. Everything else follows from this.
+    // I.e. clustering can be detected in X & Y direction independently. The
+    // solution is then the first step where lcm(x_step, y_step). For a ~5 ms
+    // solution without external inspiration, check the Git commit history.
 
-    // Iterate steps until we find one for which the given percentage of robots
-    // are in adjacent positions.
-    // NOTE: This threshold is pretty random... Putting it at 50% doesn't work,
-    // even though the problem statement says "most of the robots" should be
-    // arranged in a picture of a Christmas tree...
-    const REQUIRED_CLUSTER_PERCENTAGE: usize = 30;
-    const NUM_PARALLEL_STEPS: usize = 128;
+    // Store X & Y position & velocity separately, so they can be loaded faster
+    // in SIMD structs later on.
+    let ((robot_pos_col, robot_pos_row), (robot_vel_col, robot_vel_row)): (
+        (Vec<u8>, Vec<u8>),
+        (Vec<u8>, Vec<u8>),
+    ) = input
+        .lines()
+        .map(|e| parse_robot_data(e, ROOM_SIZE))
+        .unzip();
 
-    let required_set_size = REQUIRED_CLUSTER_PERCENTAGE * robots.len() / 100;
-    let mut num_steps: usize = 0;
+    // Detect step with maximum row and column clustering independently. The
+    // robot locations repeat at most every respectively ROOM_SIZE.row or
+    // ROOM_SIZE.col steps.
+    // NOTE: Running this in parallel with rayon::join slows things down by a
+    // factor of 2.
+    let row_steps_remainder =
+        find_step_with_min_dispersion::<{ ROOM_SIZE.row as u8 }>(&robot_pos_row, &robot_vel_row);
+    let col_steps_remainder =
+        find_step_with_min_dispersion::<{ ROOM_SIZE.col as u8 }>(&robot_pos_col, &robot_vel_col);
 
-    // NOTE: Iterating in chunks is faster than iterating over an endless range.
-    // By almost a factor 6...
-    loop {
-        let first_match = (0..NUM_PARALLEL_STEPS)
-            .par_bridge() // NOTE: This is somehow faster than into_par_iter().
-            .find_first(|offset| {
-                are_robots_clustered(&robots, num_steps + offset, required_set_size)
-            });
+    // Now we know that given a solution of N steps, N modulo respectively the
+    // room's number of rows or columns must equal one of the two values found.
+    // To solve, use the Chinese remainder theorem:
+    //   N == (row_steps_remainder + N * ROOM_SIZE.row)
+    //      iif N % ROOM_SIZE.col == col_steps_remainder.
+    // NOTE: The runtime of this loop is utterly negligible compared to the rest
+    // of the code, no point in optimizing it.
+    let num_steps = (0..ROOM_SIZE.col as u8)
+        .map(|step| (row_steps_remainder as u16 + step as u16 * ROOM_SIZE.row as u16) as u16)
+        .find(|e| *e % ROOM_SIZE.col as u16 == col_steps_remainder as u16)
+        .unwrap();
 
-        match first_match {
-            Some(offset) => return num_steps + offset,
-            None => num_steps += NUM_PARALLEL_STEPS,
+    log::debug!("num steps => {}{}", num_steps, {
+        let mut map =
+            na::DMatrix::from_element(ROOM_SIZE.row as usize, ROOM_SIZE.col as usize, '.');
+        let robots: Vec<Robot> = input.lines().map(|e| e.parse().unwrap()).collect();
+        for robot in robots.iter() {
+            map[robot.step(&ROOM_SIZE, num_steps as isize)] = '#'
         }
-    }
+        map
+    });
+
+    num_steps as usize
 }
 
 #[cfg(test)]
