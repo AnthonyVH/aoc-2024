@@ -10,7 +10,7 @@ where
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct DirectedSliceIterator<'a, T>
 where
     T: ?Sized,

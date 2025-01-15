@@ -84,7 +84,7 @@ impl<T> std::ops::Index<crate::Coord> for na::DMatrix<T> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct DirectedCoordRange {
     pub start: Coord,
     pub len: usize,
@@ -100,7 +100,7 @@ impl DirectedCoordRange {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct DirectedCoordRangeIterator {
     // Store the range inside the iterator, such that the original range doesn't need to
     // remain alive. This allows storing this struct as a member of another struct,

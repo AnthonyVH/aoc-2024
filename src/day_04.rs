@@ -57,8 +57,7 @@ impl std::str::FromStr for WordSearch {
             data: MatrixWrapper(na::DMatrix::from_row_iterator(
                 rows,
                 cols,
-                s.lines()
-                    .flat_map(|e| e.as_bytes().iter().map(|e: &u8| *e)),
+                s.lines().flat_map(|e| e.as_bytes().iter().map(|e: &u8| *e)),
             )),
         })
     }
@@ -76,6 +75,7 @@ pub fn part_a(input: &str) -> usize {
         util::Direction::South,
     ];
 
+    // TODO: Check if precalculating coordinate offsets speeds things up.
     itertools::Itertools::cartesian_product(0..word_search.nrows(), 0..word_search.ncols())
         .map(|e| e.into())
         .map(|coord| {
@@ -99,39 +99,56 @@ pub fn part_a(input: &str) -> usize {
 pub fn part_b(input: &str) -> usize {
     let word_search: WordSearch = input.parse().unwrap();
 
-    // At every point in the matrix, take the length-3 diagonal right-down from that
-    // point, and left-up from (3 - 1) rows down. Both must contain the needle, either
-    // forward or reversed.
-    const NEEDLE: &'static str = "MAS";
-    const OFFSETS: &'static [(util::Direction, util::Coord)] = &[
-        (util::Direction::SouthEast, util::Coord { row: 0, col: 0 }),
-        (
-            util::Direction::NorthEast,
-            util::Coord {
-                row: NEEDLE.len() as isize - 1,
-                col: 0,
-            },
-        ),
+    // A cross of needle "MAS" always requires the A to be in the center. So we can
+    // check that first
+    const NEEDLE_LEN: usize = 3;
+    const NEEDLE_MID: u8 = b'A';
+    const NEEDLE_OUTER: [u8; 2] = [b'M', b'S'];
+
+    const OFFSET_OUTERS: [[util::Coord; 2]; 2] = [
+        [
+            // South-east diagonal
+            util::Coord { row: 0, col: 0 },
+            util::Coord { row: 2, col: 2 },
+        ],
+        [
+            // North-east diagonal
+            util::Coord { row: 2, col: 0 },
+            util::Coord { row: 0, col: 2 },
+        ],
     ];
+    const OFFSET_MID: util::Coord = util::Coord { row: 1, col: 1 };
 
     itertools::Itertools::cartesian_product(
-        0..(word_search.nrows() - (NEEDLE.len() - 1)),
-        0..(word_search.ncols() - (NEEDLE.len() - 1)),
+        0..(word_search.nrows() - (NEEDLE_LEN - 1)),
+        0..(word_search.ncols() - (NEEDLE_LEN - 1)),
     )
     .map(|e| e.into())
-    .map(|coord: util::Coord| {
-        // Needle must be found in both directions.
-        OFFSETS.iter().all(|(dir, start_offset)| {
-            let range = util::DirectedCoordRange {
-                start: coord + *start_offset,
-                len: NEEDLE.len(),
-                dir: *dir,
-            };
-            let slice = word_search.slice(range);
-            slice.clone().eq(NEEDLE.as_bytes()) || slice.eq(NEEDLE.as_bytes().iter().rev())
-        }) as usize
+    .filter(|start_coord: &util::Coord| {
+        // Check that all lists of offsets point to elements equal to needle.
+        OFFSET_OUTERS.iter().all(|offset_coords| {
+            let get_elem = |&offset| util::Get::get(&word_search.data.0, &(*start_coord + offset));
+
+            if get_elem(&OFFSET_MID).is_some_and(|e| *e != NEEDLE_MID) {
+                // NOTE: This rechecked for each offset list, which is a bit redundant.
+                false
+            } else {
+                let values = offset_coords.iter().map(|e| get_elem(e));
+
+                if values.clone().any(|e| e.is_none()) {
+                    // All coordinates must fall within the matrix.
+                    false
+                } else {
+                    // Values must match either forward or backward.
+                    std::iter::zip(values.clone(), NEEDLE_OUTER.iter())
+                        .all(|(value, needle)| value.unwrap() == needle)
+                        || std::iter::zip(values, NEEDLE_OUTER.iter().rev())
+                            .all(|(value, needle)| value.unwrap() == needle)
+                }
+            }
+        })
     })
-    .sum()
+    .count()
 }
 
 #[cfg(test)]
@@ -139,12 +156,18 @@ mod tests {
     #[test]
     fn example_a() {
         let expected: usize = 18;
-        assert_eq!(crate::day_04::part_a(&util::read_resource("example_04.txt").unwrap()), expected);
+        assert_eq!(
+            crate::day_04::part_a(&util::read_resource("example_04.txt").unwrap()),
+            expected
+        );
     }
 
     #[test]
     fn example_b() {
         let expected: usize = 9;
-        assert_eq!(crate::day_04::part_b(&util::read_resource("example_04.txt").unwrap()), expected);
+        assert_eq!(
+            crate::day_04::part_b(&util::read_resource("example_04.txt").unwrap()),
+            expected
+        );
     }
 }
