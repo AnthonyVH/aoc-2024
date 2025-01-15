@@ -1,14 +1,14 @@
 struct RunResult {
+    name: String,
     solution: String,
     duration: std::time::Duration,
 }
 
 struct Runner {
-    name: String,
     invoker: Box<dyn Fn() -> RunResult>,
 }
 
-fn invoke_timed<T>(invoker: T) -> RunResult
+fn invoke_timed<T>(name: &String, invoker: T) -> RunResult
 where
     T: Fn() -> String,
 {
@@ -25,6 +25,7 @@ where
 
     durations.sort();
     RunResult {
+        name: name.clone(),
         solution,
         duration: durations[durations.len() / 2],
     }
@@ -34,16 +35,15 @@ macro_rules! create_runner {
     ($day:ident, $part:ident) => {{
         let input_file = format!("{}.txt", stringify!($day));
         let input = util::read_resource(&input_file).unwrap();
-        let day_str = stringify!($day);
+        let name = format!(
+            "{} - {}",
+            heck::AsTitleCase(stringify!($day)),
+            heck::AsTitleCase(stringify!($part))
+        );
 
         Runner {
-            name: format!(
-                "Day {} - {}",
-                day_str[day_str.len() - 2..].to_string(),
-                heck::AsTitleCase(stringify!($part))
-            ),
             invoker: Box::new(move || {
-                invoke_timed(|| format!("{}", aoc_2024::$day::$part(&input)))
+                invoke_timed(&name, || format!("{}", aoc_2024::$day::$part(&input)))
             }),
         }
     }};
@@ -100,24 +100,40 @@ fn main() {
         create_runner!(day_25, part_a),
     ];
 
-    let mut total: std::time::Duration = std::time::Duration::new(0, 0);
-    for runner in runners {
-        let result = (runner.invoker)();
-        let us = result.duration.as_micros();
-        total += result.duration;
+    let mut results: Vec<RunResult> = runners.iter().map(|e| (e.invoker)()).collect();
+    results.push(RunResult {
+        name: String::from("Total"),
+        solution: String::default(),
+        duration: results.iter().map(|e| e.duration).sum(),
+    });
+
+    let max_width_name: usize = results.iter().map(|e| e.name.len()).max().unwrap();
+    let max_width_solution: usize = results.iter().map(|e| e.solution.len()).max().unwrap();
+    let max_width_time: usize = results
+        .iter()
+        .map(|e| util::digit_width_base10(e.duration.as_micros() as u64))
+        .max()
+        .unwrap() as usize;
+
+    for (idx, result) in results.iter().enumerate() {
+        if idx == results.len() - 1 {
+            println!(
+                "{:=^width$}",
+                "",
+                width = max_width_name + max_width_solution + max_width_time + 10
+            );
+        }
+
+        let duration_us = result.duration.as_micros();
         println!(
-            "{:15}: {:<38}{:7} µs{:>2}",
-            runner.name,
+            "{:<width_name$} {:<width_solution$}   {:>width_time$} µs{:>2}",
+            format!("{}:", result.name),
             result.solution,
-            us,
-            if us > 1000 { "!" } else { "" }
+            duration_us,
+            if duration_us > 1000 { "!" } else { "" },
+            width_name = max_width_name + 1, // Added a ':' to the name.
+            width_solution = max_width_solution,
+            width_time = max_width_time,
         );
     }
-    println!("{:=^67}", "");
-    println!(
-        "{:52}{:10} µs{:>2}",
-        "Total:",
-        total.as_micros(),
-        if total.as_secs_f64() > 1. { "!" } else { "" },
-    );
 }
