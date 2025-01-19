@@ -1,6 +1,6 @@
-use itertools::Itertools;
 use nalgebra as na;
-use std::collections::VecDeque;
+use rayon::prelude::*;
+use std::simd::{cmp::SimdPartialOrd, num::SimdInt, Simd};
 
 struct Problem {
     maze: util::Maze,
@@ -25,181 +25,212 @@ static SEARCH_DIRS: [util::Coord; 4] = [
 ];
 
 impl Problem {
-    /// Calculate distance from given cell to every other cell in the maze.
-    fn flood_fill(&self, from: util::Coord) -> na::DMatrix<u64> {
-        let maze_size = self.maze.size();
-        let mut result =
-            na::DMatrix::from_element(maze_size.row as usize, maze_size.col as usize, u64::MAX);
-        result[from] = 0;
+    const SIMD_SIZE: usize = 16;
 
-        // NOTE: This capacity is about pi / 4 too large, since the maximum
-        // cell we can reach is bounded by a circle, but whatever.
-        let mut to_visit: VecDeque<util::Coord> =
-            VecDeque::with_capacity((self.maze.size().row * self.maze.size().col) as usize);
-        to_visit.push_back(from);
+    /// Calculate distance from any point on the race track to the end point.
+    /// Returns the coordinates of the race track (in reverse order, i.e. from
+    /// end to start!), and a map with distances to the end.
+    fn calculate_race_path(maze: &util::Maze) -> (Vec<util::Coord>, na::DMatrix<u16>) {
+        // Use a value for unreachable cells that can be added together with
+        // another distance within the map without overflowing. This is used
+        // later on to avoid having to call saturating_add() on SIMD elements.
+        let unreachable_value = (maze.size().row * maze.size().col + 1) as u16;
+
+        let mut reversed_path = Vec::new();
+        let mut distances = na::DMatrix::from_element(
+            maze.size().row as usize,
+            maze.size().col as usize,
+            unreachable_value,
+        );
+
+        distances[maze.end_pos] = 0;
+        reversed_path.push(maze.end_pos);
+
+        // NOTE: The race track is exactly that: a track, i.e. there's no side
+        // branches or anything, just a single path.
+        let mut cur_pos = maze.end_pos;
 
         // Do a BFS until each (reachable) cell has been visited.
-        while let Some(pos) = to_visit.pop_front() {
-            let next_dist = result[pos] + 1;
-            for offset_dir in SEARCH_DIRS.iter() {
-                let next_pos = pos + offset_dir;
-                if self.maze.accessible(&next_pos) && (result[next_pos] == u64::MAX) {
-                    result[next_pos] = next_dist;
-                    to_visit.push_back(next_pos);
-                }
-            }
+        while cur_pos != maze.start_pos {
+            // Only one of these directions is possible. It's the cell that's
+            // not a wall, and not yet visited.
+            cur_pos = SEARCH_DIRS
+                .iter()
+                .map(|offset| cur_pos + offset)
+                .filter(|pos| maze.accessible(pos) && (distances[pos] == unreachable_value))
+                .next()
+                .unwrap();
+
+            distances[cur_pos] = reversed_path.len() as u16;
+            reversed_path.push(cur_pos);
         }
 
-        result
+        assert_eq!(reversed_path.len() - 1, distances[maze.start_pos] as usize);
+        (reversed_path, distances)
     }
 
-    fn min_cheat_start_to_end_dist(
+    fn _num_masks_per_column(max_cheat_distance: u16) -> usize {
+        (2 * max_cheat_distance + 1) as usize
+    }
+
+    fn _num_simd_words_per_column(max_cheat_distance: u16) -> usize {
+        Self::_num_masks_per_column(max_cheat_distance).div_ceil(Self::SIMD_SIZE)
+    }
+
+    fn _expand_maze(prev_maze: &util::Maze, max_cheat_distance: u16) -> util::Maze {
+        // Expand maze matrix, such that we never have to check for bounds.
+        let maze_offset = util::Coord {
+            row: max_cheat_distance as isize,
+            col: max_cheat_distance as isize,
+        };
+
+        // nalgebra matrices are stored in column-major order. Hence when we
+        // load multiple elements in a SIMD element, this happens in the row
+        // direction (column per column). However, the number of words per SIMD
+        // element might not nicely divide the max_cheat_distance. Which means
+        // the "bottom" needs to be expanded more, to ensure that even for the
+        // bottom-most cell in the original maze there is guaranteed no
+        // out-of-bounds access when loading all "south" cells in SIMD elements.
+        let maze_expansion: (usize, usize) = (
+            Self::SIMD_SIZE * Self::_num_simd_words_per_column(max_cheat_distance),
+            2 * max_cheat_distance as usize,
+        );
+        let mut expanded_maze = util::Maze {
+            maze: na::DMatrix::from_element(
+                prev_maze.maze.nrows() + maze_expansion.0,
+                prev_maze.maze.ncols() + maze_expansion.1,
+                false,
+            ),
+            start_pos: prev_maze.start_pos + maze_offset,
+            end_pos: prev_maze.end_pos + maze_offset,
+        };
+
+        // Assign existing maze to the expanded one.
+        expanded_maze
+            .maze
+            .view_mut(maze_offset.as_pair(), prev_maze.maze.shape())
+            .copy_from(&prev_maze.maze);
+
+        expanded_maze
+    }
+
+    fn _calculate_simd_masks(
         &self,
-        dist_from_start: &na::DMatrix<u64>,
-        cheat_start: &util::Coord,
-    ) -> u64 {
-        // The minimum cheat path requires N steps to get to its start. Then it
-        // takes another M steps (Manhattan distance) to get to the end, at
-        // minimum. Don't bother trying any points for which this minimum
-        // distance is too large.
-        dist_from_start[cheat_start] + (cheat_start.manhattan_distance(&self.maze.end_pos) as u64)
+        max_cheat_distance: u16,
+    ) -> Vec<Vec<Simd<u16, { Self::SIMD_SIZE }>>> {
+        // Calculate SIMD masks for all the accessible cheat endpoints from a
+        // given start point. Each entry in the mask contains its distance from
+        // the origin point (Manhattan distance). Unreachable points are set to
+        // one more than the maximum length of the path. Do this column-wise
+        // because of the column-major storage of na::Matrix.
+        let max_path_length = (self.maze.maze.nrows() * self.maze.maze.ncols()) as u16;
+        let origin: util::Coord = (0, 0).into();
+
+        let mut simd_masks = Vec::new();
+
+        for col in -(max_cheat_distance as i16)..=(max_cheat_distance as i16) {
+            // The first column (left-most) is only reachable by moving only to
+            // the left. For the next columns, an extra cell is reachable above
+            // and below the previously "highest" & "lowest" reachable cell. At
+            // column 0, all cells in cheat distance are reachable.
+            let mut column_masks = vec![
+                Simd::splat(max_path_length);
+                Self::_num_simd_words_per_column(max_cheat_distance)
+            ];
+
+            for row in -(max_cheat_distance as i16)..=(max_cheat_distance as i16) {
+                let offset = util::Coord {
+                    row: row.into(),
+                    col: col.into(),
+                };
+                let dist_from_center = origin.manhattan_distance(&offset) as u16;
+
+                if dist_from_center > max_cheat_distance {
+                    continue;
+                }
+
+                let offset_row = (row + max_cheat_distance as i16) as usize;
+                let element_idx = offset_row / Self::SIMD_SIZE;
+                let word_idx = offset_row % Self::SIMD_SIZE;
+
+                column_masks[element_idx][word_idx] = dist_from_center;
+            }
+
+            simd_masks.push(column_masks);
+        }
+
+        log::debug!("masks: {:?}", simd_masks);
+        simd_masks
     }
 
-    /// Find all cheats that improve on the non-cheat distance. For each cheat,
-    /// which is identified by it's start and end coordinate, only the minimum
-    /// distance path is returned.
-    fn num_cheat_paths(&self, min_required_improvement: u64, max_cheat_distance: u64) -> u64 {
-        // NOTE: It's possible to speed this up by at least a factor 2 for
-        // problem A, by making the implementation less generic. But eh...
+    fn num_cheat_paths(&self, min_required_improvement: u16, max_cheat_distance: u16) -> u64 {
+        assert!(self.maze.maze.nrows() < 255);
+        assert!(self.maze.maze.ncols() < 255);
 
-        // First find all the shortest distances from the start to any point,
-        // and from the end to any point. The distance from the start is used
-        // to determine the distance required to get to a cheat's start. The
-        // distance from the end is used to determine the distance required to
-        // get to the end from a cheat's end.
-        let dist_from_start = self.flood_fill(self.maze.start_pos);
-        let dist_from_end = self.flood_fill(self.maze.end_pos);
+        // Expand maze matrix, such that we never have to check for bounds.
+        let expanded_maze = Self::_expand_maze(&self.maze, max_cheat_distance);
 
-        // A cheat should always improve on a non-cheat path.
-        let max_allowed_cheat_dist = dist_from_start[self.maze.end_pos] - min_required_improvement;
+        let (reversed_path, dist_from_end) = Self::calculate_race_path(&expanded_maze);
+        let distance_masks = self._calculate_simd_masks(max_cheat_distance);
 
-        // Generate all offsets from a given point, up to a distance equal to
-        // the maximum cheat distance. We can then use these offsets to find
-        // possible cheats, instead of each time finding all possible paths
-        // from a given start (which ends up generating the same offsets).
-        let cheat_path_offsets = Self::_path_offsets(max_cheat_distance);
+        // Loop over every step of the race path.
+        // NOTE: Paths closer to the end than the minimum required improvement
+        // can't improve enough on the solution, so skip those.
+        reversed_path[min_required_improvement as usize..]
+            .into_par_iter()
+            .map(|pos| {
+                let max_dist_to_end = Simd::splat(dist_from_end[pos] - min_required_improvement);
+                let cheat_start_row = pos.row as usize - max_cheat_distance as usize;
 
-        // Visit every accessible cell. For each one, determine all possible
-        // cheats. Since each of these cheats starts at that cell, there's no
-        // other cheats starting at another cell that can be the same. Hence,
-        // any cheat found starting at a given cell, is unique to that cell.
-        // So there's no need to compare to cheats from other cells.
+                let mut num_valid_cheats = Simd::splat(0);
 
-        // NOTE: Parallelizing the next chain speeds it up by a factor 5 for
-        // part B. It slows it down by a factor 2.5 for part A though. So we
-        // run it conditionally in parallel.
-        const RUN_PARALLEL_THRESHOLD: u64 = 10;
-        let run_parallel = max_cheat_distance >= RUN_PARALLEL_THRESHOLD;
+                // Process every column in the jump masks table.
+                let columns = dist_from_end.columns(
+                    (pos.col - max_cheat_distance as isize) as usize,
+                    (2 * max_cheat_distance + 1) as usize,
+                );
+                for (column_masks, column) in distance_masks.iter().zip(columns.column_iter()) {
+                    let col_slice = &column.as_slice()[cheat_start_row..];
 
-        // Since Itertools::cartesian_product isn't compatible with rayon, just
-        // generate a single range and convert it as an index into a Coord.
-        let num_cells = (self.maze.size().row * self.maze.size().col) as usize;
+                    for (cheat_distances, dists_chunk) in
+                        column_masks.iter().zip(col_slice.chunks(Self::SIMD_SIZE))
+                    {
+                        let dists_to_end = Simd::from_slice(&dists_chunk);
+                        let cheated_dist_to_end = dists_to_end + cheat_distances;
+                        let is_valid_cheat = cheated_dist_to_end.simd_le(max_dist_to_end);
 
-        rayon_cond::CondIterator::new(0..num_cells, run_parallel)
-            .map(|idx| {
-                util::Coord::from_column_major_index(
-                    idx,
-                    self.maze.size().row as usize,
-                    self.maze.size().col as usize,
-                )
-            })
-            .filter(|pos| match self.maze.is_wall(pos) {
-                true => false,
-                false => {
-                    self.min_cheat_start_to_end_dist(&dist_from_start, pos)
-                        <= max_allowed_cheat_dist
+                        // An SIMD Mask converted to Simd has 0 for false and -1
+                        // for true. So subtract to get the equivalent of adding
+                        // a 1 for each matching comparison.
+                        // NOTE: This is a loop-carried dependency. Trying to get
+                        // rid of it by summing into an intermediate array slows
+                        // things down by a factor of 30% though.
+                        // The compiler seems to unroll this loop by 2 such that
+                        // the loop-carried dependency doesn't slow things down.
+                        num_valid_cheats -= is_valid_cheat.to_int();
+                    }
                 }
-            })
-            .map(|start_pos| {
-                // Evaluate all cheat paths starting at this position.
-                let dist_to_cheat_start = dist_from_start[start_pos];
 
-                cheat_path_offsets
-                    .iter()
-                    .filter(|(offset, dist_to_cheat_end)| {
-                        let cheat_end_pos = start_pos + offset;
-
-                        // Only count cheats ending on a non-wall cell.
-                        match self.maze.accessible(&cheat_end_pos) {
-                            false => false,
-                            true => {
-                                let cheat_dist = dist_to_cheat_start
-                                    + dist_to_cheat_end
-                                    + dist_from_end[cheat_end_pos];
-                                cheat_dist <= max_allowed_cheat_dist
-                            }
-                        }
-                    })
-                    .count() as u64
+                num_valid_cheats.reduce_sum() as u64
             })
             .sum()
     }
-
-    /// Generate all offsets from a given point, up to a given distance.
-    fn _path_offsets(max_distance: u64) -> Vec<(util::Coord, u64)> {
-        // NOTE: The generated offsets are generated for all quadrants. Although
-        // most offsets can simply be mirrored to get their "equivalents" in
-        // other quadrants, this is not true when either the row or col offset
-        // is zero. Hence, to keep iterating over these offsets as fast as
-        // possible, all offsets are generated here.
-        let mut result: Vec<(util::Coord, u64)> = (0..=max_distance)
-            .cartesian_product(0..=max_distance)
-            .map(|(row, col)| {
-                const ZERO: util::Coord = util::Coord { row: 0, col: 0 };
-                let pos = util::Coord {
-                    row: row as isize,
-                    col: col as isize,
-                };
-                let dist = ZERO.manhattan_distance(&pos) as u64;
-                (pos, dist)
-            })
-            .filter(|(_, dist)| (*dist > 0) && (*dist <= max_distance))
-            .map(|(pos, dist)| {
-                // Generate all mirrored versions.
-                [(1, 1), (-1, 1), (1, -1), (-1, -1)].map(|(row_mult, col_mult)| {
-                    (
-                        util::Coord {
-                            row: pos.row * row_mult,
-                            col: pos.col * col_mult,
-                        },
-                        dist,
-                    )
-                })
-            })
-            .flatten()
-            .collect();
-
-        result.sort_by_key(|&(pos, dist)| (dist, pos));
-        result.dedup();
-
-        result
-    }
 }
 
-fn solve_configurable(input: &str, min_time_saving: u64, max_cheat_time: u64) -> u64 {
+fn solve_configurable(input: &str, min_time_saving: u16, max_cheat_time: u16) -> u64 {
     let problem: Problem = input.parse().unwrap();
     problem.num_cheat_paths(min_time_saving, max_cheat_time)
 }
 
 pub fn part_a(input: &str) -> u64 {
-    const MIN_TIME_SAVING: u64 = 100;
-    const MAX_CHEAT_TIME: u64 = 2;
+    const MIN_TIME_SAVING: u16 = 100;
+    const MAX_CHEAT_TIME: u16 = 2;
     solve_configurable(input, MIN_TIME_SAVING, MAX_CHEAT_TIME)
 }
 
 pub fn part_b(input: &str) -> u64 {
-    const MIN_TIME_SAVING: u64 = 100;
-    const MAX_CHEAT_TIME: u64 = 20;
+    const MIN_TIME_SAVING: u16 = 100;
+    const MAX_CHEAT_TIME: u16 = 20;
     solve_configurable(input, MIN_TIME_SAVING, MAX_CHEAT_TIME)
 }
 
@@ -208,19 +239,19 @@ mod tests {
     #[test]
     fn example_a_distance() {
         util::run_test(|| {
-            let expected: u64 = 84;
+            let expected: u16 = 84;
             let input = util::read_resource("example_20.txt").unwrap();
             let problem: crate::day_20::Problem = input.as_str().parse().unwrap();
-            let shortest_paths = problem.flood_fill(problem.maze.start_pos);
-            assert_eq!(shortest_paths[problem.maze.end_pos], expected);
+            let (_, dist_to_end) = crate::day_20::Problem::calculate_race_path(&problem.maze);
+            assert_eq!(dist_to_end[problem.maze.start_pos], expected);
         });
     }
 
     #[test]
-    fn example_a_num_faster() {
+    fn example_a() {
         util::run_test(|| {
-            const MIN_TIME_SAVING: u64 = 20;
-            const MAX_CHEAT_TIME: u64 = 2;
+            const MIN_TIME_SAVING: u16 = 20;
+            const MAX_CHEAT_TIME: u16 = 2;
             let expected: u64 = 5;
             assert_eq!(
                 crate::day_20::solve_configurable(
@@ -239,8 +270,8 @@ mod tests {
                 #[test]
                 fn [< example_b_ $test_subname >] () {
                     util::run_test(|| {
-                        const MIN_TIME_SAVING: u64 = $min_time_saving;
-                        const MAX_CHEAT_TIME: u64 = 20;
+                        const MIN_TIME_SAVING: u16 = $min_time_saving;
+                        const MAX_CHEAT_TIME: u16 = 20;
                         let expected: u64 = $expected;
                         assert_eq!(
                             crate::day_20::solve_configurable(

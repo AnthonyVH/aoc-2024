@@ -2,7 +2,7 @@ use nalgebra as na;
 
 #[derive(Debug, Clone)]
 pub struct Maze {
-    pub maze: na::DMatrix<char>,
+    pub maze: na::DMatrix<bool>,
     pub start_pos: crate::Coord,
     pub end_pos: crate::Coord,
 }
@@ -16,14 +16,14 @@ impl Maze {
     }
 
     pub fn is_wall(&self, pos: &crate::Coord) -> bool {
-        self.maze[pos] == '#'
+        !self.maze[pos]
     }
 
     pub fn accessible(&self, pos: &crate::Coord) -> bool {
         pos.bounded_by(&self.size()) && !self.is_wall(pos)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &char> {
+    pub fn iter(&self) -> impl Iterator<Item = &bool> {
         self.maze.iter()
     }
 }
@@ -49,7 +49,7 @@ impl std::str::FromStr for Maze {
                         'E' => end_idx = *idx,
                         _ => (),
                     })
-                    .map(|(_, e)| e),
+                    .map(|(_, e)| e != '#'),
             ),
             start_pos: crate::Coord { row: 0, col: 0 },
             end_pos: crate::Coord { row: 0, col: 0 },
