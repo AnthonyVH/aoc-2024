@@ -1,6 +1,8 @@
+#![feature(array_chunks)]
+#![feature(duration_millis_float)]
+#![feature(int_roundings)]
 #![feature(iter_array_chunks)]
 #![feature(portable_simd)]
-#![feature(int_roundings)]
 
 pub mod day_01;
 pub mod day_02;
