@@ -16,20 +16,20 @@ where
 {
     // Invoke a few times and report median.
     const NUM_RUNS: usize = 11;
-    let mut durations: Vec<std::time::Duration> = Vec::new();
+    let mut duration: std::time::Duration = std::time::Duration::MAX;
     let mut solution = String::new();
 
     for _ in 0..NUM_RUNS {
         let invoke_start = std::time::Instant::now();
         solution = (invoker)();
-        durations.push(invoke_start.elapsed());
+        duration = std::cmp::min(duration, invoke_start.elapsed());
     }
 
-    durations.sort();
+    // Use the minimum seen duration.
     RunResult {
         name: name,
         solution,
-        duration: durations[durations.len() / 2],
+        duration: duration
     }
 }
 
