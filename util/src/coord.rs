@@ -42,9 +42,7 @@ impl Coord {
     }
 
     pub fn manhattan_distance(&self, other: &Coord) -> usize {
-        (self.row.abs_diff(other.row) + self.col.abs_diff(other.col))
-            .try_into()
-            .unwrap()
+        self.row.abs_diff(other.row) + self.col.abs_diff(other.col)
     }
 }
 

@@ -1,4 +1,5 @@
-extern crate nalgebra as na;
+use nalgebra as na;
+use rayon::prelude::*;
 
 trait DirectionUtils {
     const NUM_DIRECTIONS: usize;
@@ -53,7 +54,7 @@ impl DirectionUtils for util::Direction {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 struct Guard {
     pos: util::Coord,
     dir: util::Direction,
@@ -86,6 +87,7 @@ struct StepTable {
     /// This table stores for each direction the number of steps to take until
     /// either an obstacle is reached, or we're out of bounds.
     steps_to_obstruction: [na::DMatrix<u8>; <util::Direction as DirectionUtils>::NUM_DIRECTIONS],
+    room_size: util::Coord,
 }
 
 impl StepTable {
@@ -102,6 +104,7 @@ impl StepTable {
             steps_to_obstruction: std::array::from_fn(|_| {
                 na::DMatrix::from_element(rows, cols, u8::MAX)
             }),
+            room_size: (rows, cols).into(),
         };
 
         // Set correct distances to edge in each direction
@@ -169,15 +172,18 @@ impl StepTable {
                 // value is 0, then the square after that is an obstacle.
                 let prev_pos = pos + backward_step;
 
-                match prev_pos.has_negatives() {
-                    true => Self::MARKER, // Out of bounds, nothing to do.
-                    false => match self.steps_to_obstruction[backward_dir.index()]
-                        .get(prev_pos.as_pair())
-                    {
-                        None => Self::MARKER,                // Out of bounds, nothing to do.
-                        Some(&Self::MARKER) => Self::MARKER, // Another obstacle in the way.
-                        Some(&steps) => steps,
-                    },
+                match prev_pos.bounded_by(&self.room_size) {
+                    false => Self::MARKER, // Out of bounds, nothing to do.
+                    true => {
+                        let steps = unsafe {
+                            self.steps_to_obstruction[backward_dir.index()]
+                                .get_unchecked(prev_pos.as_pair())
+                        };
+                        match steps {
+                            &Self::MARKER => Self::MARKER, // Another obstacle in the way.
+                            &steps => steps,
+                        }
+                    }
                 }
             });
 
@@ -200,13 +206,13 @@ impl StepTable {
                 // the walk will go out of bounds. Hence we need to make sure here that
                 // we don't write to this out of bounds location.
                 let prev_pos = pos + (step + 1) * backward_step;
-                match prev_pos.has_negatives() {
-                    true => break, // Reached out of bounds position.
-                    false => {
-                        match self.steps_to_obstruction[dir_idx].get_mut(prev_pos.as_pair()) {
-                            None => break, // Out of bounds.
-                            Some(prev_steps) => *prev_steps = step,
-                        }
+                match prev_pos.bounded_by(&self.room_size) {
+                    false => break, // Reached out of bounds position.
+                    true => {
+                        let prev_steps = unsafe {
+                            self.steps_to_obstruction[dir_idx].get_unchecked_mut(prev_pos.as_pair())
+                        };
+                        *prev_steps = step;
                     }
                 }
             }
@@ -247,23 +253,31 @@ impl StepTable {
                         match self.steps_to_obstruction[backward_dir.index()]
                             .get(prev_pos.as_pair())
                         {
-                            None => 0,                                           // Out of bounds position.
+                            None => 0,                /* Out of bounds position. */
                             Some(&Self::MARKER) => 0, // Another obstacle in the way.
-                            Some(&num_cells_backward) => num_cells_backward + 1, // One extra since steps go down to 0.
+                            Some(&num_cells_backward) => num_cells_backward + 1, /* One extra
+                                                        * since steps
+                                                        * go down to
+                                                        * 0. */
                         }
                     }
                 };
 
                 // Get the number of steps to the next obstacle in the forward direction.
-                // If the next position is an out of bounds one, we want to make sure we step onto it.
+                // If the next position is an out of bounds one, we want to make sure we step onto
+                // it.
                 let next_pos = pos + step;
-                let steps_offset = match next_pos.has_negatives() {
-                    true => 1, // Out of bounds position.
-                    false => {
-                        match self.steps_to_obstruction[dir.index()].get(next_pos.as_pair()) {
-                            None => 1,                                         // Out of bounds position.
-                            Some(&Self::MARKER) => 0, // Another obstacle in the way.
-                            Some(num_cells_forward) => *num_cells_forward + 1, // One extra because we're checking the next square.
+                let steps_offset = match next_pos.bounded_by(&self.room_size) {
+                    false => 1, // Out of bounds position.
+                    true => {
+                        let steps = unsafe {
+                            self.steps_to_obstruction[dir.index()].get_unchecked(next_pos.as_pair())
+                        };
+                        match steps {
+                            // Another obstacle in the way.
+                            &Self::MARKER => 0,
+                            // One extra because we're checking the next square.
+                            num_cells_forward => *num_cells_forward + 1,
                         }
                     }
                 };
@@ -299,7 +313,7 @@ impl StepTable {
 
     fn remaining_steps(&self, pos: util::Coord, dir: util::Direction) -> u8 {
         let result = self.steps_to_obstruction[dir.index()][pos.as_pair()];
-        log::debug!("Steps going {:?} from {:?}: {}", dir, pos, result);
+        log::trace!("Steps going {:?} from {:?}: {}", dir, pos, result);
         assert!(result != Self::MARKER);
         result
     }
@@ -321,14 +335,13 @@ impl std::str::FromStr for StepTable {
 
         for (row, line) in s.lines().enumerate() {
             for (col, e) in line.as_bytes().iter().enumerate() {
-                match e {
-                    b'#' => result.add_obstruction((row, col).into()),
-                    _ => (),
+                if e == &b'#' {
+                    result.add_obstruction((row, col).into())
                 }
             }
         }
 
-        log::debug!("Steps:\n{}", result);
+        log::trace!("Steps:\n{}", result);
         Ok(result)
     }
 }
@@ -350,8 +363,7 @@ impl std::fmt::Display for StepTable {
 struct Problem {
     step_table: StepTable,
     guard: Guard,
-    nrows: usize,
-    ncols: usize,
+    room_size: util::Coord,
 }
 
 impl std::str::FromStr for Problem {
@@ -364,27 +376,43 @@ impl std::str::FromStr for Problem {
         Ok(Self {
             step_table: s.parse().unwrap(),
             guard: s.parse().unwrap(),
-            nrows: rows,
-            ncols: cols,
+            room_size: (rows, cols).into(),
         })
     }
 }
 
 struct Patrol {
-    is_loop: bool,
     visited: na::DMatrix<u8>,
 }
 
 impl Patrol {
-    fn new(rows: usize, cols: usize) -> Patrol {
+    fn new(room_size: util::Coord) -> Patrol {
         Patrol {
-            is_loop: false,
-            visited: na::DMatrix::from_element(rows, cols, 0),
+            visited: na::DMatrix::zeros(room_size.row as usize, room_size.col as usize),
         }
     }
 }
 
 impl Problem {
+    fn advance_guard_slow(&self, mut guard: Guard) -> Option<Guard> {
+        match self.step_table.remaining_steps(guard.pos, guard.dir) {
+            StepTable::MARKER => unreachable!(), // Somehow ended up on an obstruction.
+            0 => {
+                // No more steps allowed in this direction, just turn.
+                guard.dir = guard.dir.turn();
+            }
+            _ => {
+                // Take a single step, so we can properly track all the visited squares.
+                guard.pos += util::Coord::from(guard.dir);
+            }
+        }
+
+        match guard.pos.bounded_by(&self.room_size) {
+            false => None,
+            true => Some(guard),
+        }
+    }
+
     /// Simulate the guard patrolling the lab. Calculation ends when a loop is
     /// detected, or the guard walks outside the lab.
     ///
@@ -392,43 +420,67 @@ impl Problem {
     /// squares visited by the guard, in the direction it was visited. I.e. it's
     /// possible the same square is visited from multiple directions.
     fn patrol_slow(&self) -> Patrol {
-        let mut result = Patrol::new(self.nrows, self.ncols);
+        let mut result = Patrol::new(self.room_size);
         let mut guard = self.guard;
 
         // Iterate until guard loops or goes out of bounds.
         loop {
             // Take a step in the current direction.
-            match self.step_table.remaining_steps(guard.pos, guard.dir) {
-                StepTable::MARKER => unreachable!(), // Somehow ended up on an obstruction.
-                0 => {
-                    // No more steps allowed in this direction, just turn.
-                    guard.dir = guard.dir.turn();
-                }
-                _ => {
-                    // Take a single step, so we can properly track all the visited squares.
-                    guard.pos += util::Coord::from(guard.dir);
-                }
-            }
+            guard = match self.advance_guard_slow(guard) {
+                None => break,
+                Some(guard) => guard,
+            };
 
-            match guard.pos.has_negatives() {
-                true => break, // Went out of bound.
-                false => {
-                    match result.visited.get_mut(guard.pos.as_pair()) {
-                        None => break, // Out of bounds.
-                        Some(square_visited) => {
-                            if (*square_visited & guard.dir.mask()) != 0 {
-                                result.is_loop = true;
-                                break; // Stop, guard was here before.
-                            }
-
-                            *square_visited |= guard.dir.mask();
-                        }
-                    }
-                }
+            let square_visited = unsafe { result.visited.get_unchecked_mut(guard.pos.as_pair()) };
+            if (*square_visited & guard.dir.mask()) != 0 {
+                break; // Stop, guard was here before.
             }
+            *square_visited |= guard.dir.mask();
         }
 
         result
+    }
+
+    fn advance_guard_fast(&self, mut guard: Guard, step_table: &StepTable) -> Option<Guard> {
+        match step_table.remaining_steps(guard.pos, guard.dir) {
+            StepTable::MARKER => unreachable!(), // Somehow ended up on an obstruction.
+            steps => {
+                // Jump to the next obstruction, and then already turn in
+                // preparation for the next jump. Note that the jump can
+                // have a length of zero.
+                guard.pos += steps * util::Coord::from(guard.dir);
+                guard.dir = guard.dir.turn();
+
+                match guard.pos.bounded_by(&self.room_size) {
+                    true => Some(guard),
+                    false => None,
+                }
+            }
+        }
+    }
+
+    fn _brent_cycle_detection(&self, step_table: &StepTable) -> Option<usize> {
+        // Partial implementation of Brent's cycle detection algorithm. We're
+        // not interested in the actual cycle length and offset.
+        let mut power = 1;
+        let mut lambda = 1;
+
+        let mut tortoise = self.guard;
+        let mut hare = self.advance_guard_fast(tortoise, step_table)?;
+
+        while tortoise != hare {
+            if power == lambda {
+                tortoise = hare;
+                power *= 2;
+                lambda = 0;
+            }
+
+            hare = self.advance_guard_fast(hare, step_table)?;
+            lambda += 1;
+        }
+
+        // Don't implement rest of Brent's algorithm, we don't need it.
+        Some(lambda)
     }
 
     /// Simulate the guard patrolling the lab by jumping around between the
@@ -436,44 +488,8 @@ impl Problem {
     /// squares have been jumped over, since that would slow us down.
     ///
     /// Returns whether the patrol is a loop.
-    fn patrol_fast(&self) -> bool {
-        let mut result = Patrol::new(self.nrows, self.ncols);
-        let mut guard = self.guard;
-
-        // Iterate until guard loops or goes out of bounds.
-        loop {
-            // Look up the number of steps to the next obstruction.
-            match self.step_table.remaining_steps(guard.pos, guard.dir) {
-                StepTable::MARKER => unreachable!(), // Somehow ended up on an obstruction.
-                steps => {
-                    // Jump to the next obstruction, and then already turn in
-                    // preparation for the next jump. Note that the jump can
-                    // have a length of zero.
-                    guard.pos += steps * util::Coord::from(guard.dir);
-                    guard.dir = guard.dir.turn();
-                }
-            }
-
-            // Check if our new position is still in bounds.
-            match guard.pos.has_negatives() {
-                true => break, // Out of bounds.
-                false => {
-                    match result.visited.get_mut(guard.pos.as_pair()) {
-                        None => break, // Out of bounds.
-                        Some(square_visited) => {
-                            if (*square_visited & guard.dir.mask()) != 0 {
-                                result.is_loop = true;
-                                break; // Stop, guard was here before.
-                            }
-
-                            *square_visited |= guard.dir.mask();
-                        }
-                    }
-                }
-            }
-        }
-
-        result.is_loop
+    fn patrol_fast(&self, step_table: &StepTable) -> bool {
+        self._brent_cycle_detection(step_table).is_some()
     }
 }
 
@@ -483,46 +499,70 @@ pub fn part_a(input: &str) -> usize {
     problem
         .patrol_slow()
         .visited
-        .iter()
+        .as_slice()
+        .par_iter()
         .filter(|&&was_visited| was_visited != 0)
         .count()
 }
 
 pub fn part_b(input: &str) -> usize {
-    let mut problem: Problem = input.parse().unwrap();
+    let problem: Problem = input.parse().unwrap();
 
     // Find all squares visited during the original patrol.
     let orig_patrol = problem.patrol_slow();
+    let num_workers: usize = std::thread::available_parallelism().unwrap().get();
 
-    // For each square visited on the original patrol, consider placing an obstacle.
-    let mut sum = 0;
-
-    for (square_idx, _) in orig_patrol
+    let patrol_coords: Vec<_> = orig_patrol
         .visited
-        .iter()
+        .as_slice()
+        .par_iter()
+        .with_min_len(orig_patrol.visited.len().div_ceil(num_workers))
         .enumerate()
-        .filter(|(_, &was_visited)| was_visited != 0)
-    {
-        // WARN: nalgebra's iter() is column-major! So must adapt coord calculation accordingly.
-        let pos = util::Coord::from_column_major_index(square_idx, problem.nrows, problem.ncols);
+        .filter_map(|(square_idx, was_visited)| {
+            match was_visited {
+                0 => None,
+                _ => {
+                    // WARN: nalgebra's iter() is column-major! So must adapt
+                    // coord calculation accordingly.
+                    let pos = util::Coord::from_column_major_index(
+                        square_idx,
+                        problem.room_size.row as usize,
+                        problem.room_size.col as usize,
+                    );
 
-        // Don't block the starting square.
-        if pos == problem.guard.pos {
-            continue;
-        }
+                    // Don't block the starting square.
+                    match pos {
+                        _ if pos == problem.guard.pos => None,
+                        _ => Some(pos),
+                    }
+                }
+            }
+        })
+        .collect();
 
-        // Block the current square.
-        assert!(!problem.step_table.is_obstructed(pos));
-        problem.step_table.add_obstruction(pos);
-        log::debug!("Obstructed {:?}:\n{:}", pos, problem.step_table);
+    // Not all patrol checks take equally long, so don't split in a number
+    // slices exactly equal to the number of CPU cores. Split smaller, so work
+    // can be stolen.
+    patrol_coords
+        .par_iter()
+        .with_min_len(patrol_coords.len().div_ceil(20 * num_workers))
+        .map_init(
+            || problem.step_table.clone(),
+            |step_table, &pos| {
+                // Block the current square.
+                assert!(!step_table.is_obstructed(pos));
+                step_table.add_obstruction(pos);
+                log::trace!("Obstructed {:?}:\n{:}", pos, step_table);
 
-        sum += problem.patrol_fast() as usize;
+                let is_loop = problem.patrol_fast(step_table);
 
-        problem.step_table.remove_obstruction(pos);
-        log::debug!("Unobstructed {:?}:\n{:}", pos, problem.step_table);
-    }
+                step_table.remove_obstruction(pos);
+                log::trace!("Unobstructed {:?}:\n{:}", pos, step_table);
 
-    sum
+                is_loop as usize
+            },
+        )
+        .sum()
 }
 
 #[cfg(test)]
